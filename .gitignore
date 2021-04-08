@@ -1,2 +1,9 @@
-./symnet
+.gitignore
+.symnet/
+.ipynb_checkpoints/
+__pycache__/
+.pyc
+.swp
+*-checkpoint.py
+
 
