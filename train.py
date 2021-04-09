@@ -173,7 +173,6 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
     for i, batch in tqdm.tqdm(
         enumerate(train_dataloader),
         total=len(train_dataloader),
-        disable=use_tune,
         position=0,
         leave=True,
         postfix='Train: epoch %d/%d'%(epoch, curr_epoch+num_epochs)):
