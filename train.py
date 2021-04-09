@@ -47,12 +47,12 @@ def train_with_config(config: dict, num_epochs: int = 1, checkpoint_dir: str = N
     optimizer.load_state_dict(optimizer_state)
 
   dset = dataset.get_dataloader('MIT', 'train', with_image=True).dataset
-  train(compoResnet, optimizer, criterion, num_epochs, obj_loss_history, attr_loss_history, batch_size, dset, use_tune=True)
+  train_with_val(compoResnet, optimizer, criterion, num_epochs, obj_loss_history, attr_loss_history, batch_size, dset, use_tune=True)
 
   
-def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], attr_loss_history: List[List], batch_size, dataset, curr_epoch=0, use_tune=False, model_dir: str = None) -> None:
+def train_with_val(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], attr_loss_history: List[List], batch_size, dataset, curr_epoch=0, use_tune=False, model_dir: str = None) -> None:
   """
-  Train the model.
+  Train the model with validation set.
   Parameters:
     [obj/attr]_loss_history: nested list of length 2. history[0] the training loss history and history[1] the validation loss history.
     curr_epoch: the epoch number the model already been trained for.
@@ -152,4 +152,63 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
         old_model = os.path.join(model_dir, f"model_{epoch-1}.pt")
         if os.path.isfile(old_model):
           os.remove(old_model)
+    print("Finished training.")
+    
+    
+def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], attr_loss_history: List[List], batch_size, train_dataloader, 
+          curr_epoch=0, model_name: str = "model", model_dir: str = None) -> None:
+  """
+  Train the model.
+  Parameters:
+    [obj/attr]_loss_history: nested list of length 2. history[0] the training loss history and history[1] the validation loss history.
+    curr_epoch: the epoch number the model already been trained for.
+    model_dir: directory to save model states.
+  """
+
+  for epoch in range(curr_epoch, curr_epoch+num_epochs):
+    epoch_steps = 0
+    obj_running_loss = 0.0
+    attr_running_loss = 0.0
+    net.train()
+    for i, batch in tqdm.tqdm(
+        enumerate(train_dataloader),
+        total=len(train_dataloader),
+        disable=use_tune,
+        position=0,
+        leave=True,
+        postfix='Train: epoch %d/%d'%(epoch, curr_epoch+num_epochs)):
+      optimizer.zero_grad()
+      img, attr_id, obj_id = batch[:3]
+      if len(img) == 1:
+        # Batchnorm doesn't accept batch with size 1
+        continue
+      obj_pred, attr_pred = net(img.to(dev))
+      obj_loss = criterion(obj_pred, obj_id.to(dev))
+      attr_loss = criterion(attr_pred, attr_id.to(dev))
+      loss = obj_loss + attr_loss
+      loss.backward()
+      optimizer.step()
+
+      obj_running_loss += obj_loss.item()
+      attr_running_loss += attr_loss.item()
+      epoch_steps += 1
+      if i % 100 == 99:
+          print("[%d, %5d] obj_loss: %.3f, attr_loss: %.3f" % (epoch+1, i + 1,
+                                          obj_running_loss / epoch_steps, attr_running_loss / epoch_steps))
+          obj_loss_history[0].append(obj_running_loss/epoch_steps)
+          attr_loss_history[0].append(attr_running_loss/epoch_steps)
+          running_loss = 0.0
+
+   
+    if model_dir:
+      model_path = os.path.join(model_dir, f"{model_name}_{epoch}.pt")
+      torch.save({
+                    'model_state_dict': net.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'obj_loss': obj_loss_history,
+                    'attr_loss': attr_loss_history,
+                    }, model_path)
+      old_model = os.path.join(model_dir, f"{model_name}_{epoch-1}.pt")
+      if os.path.isfile(old_model):
+        os.remove(old_model)
     print("Finished training.")
