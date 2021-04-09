@@ -18,7 +18,7 @@ def calc_acc(model, test_dataloader, close_setting=True, use_tune=False):
     comp_match = (obj_labels == obj_preds) * (attr_labels == attr_preds)
     return torch.sum(comp_match)
   
-  def compoMatchClosed(obj_labels, obj_preds, attr_labels, attr_preds):
+  def compoMatchClosed(obj_labels, obj_preds, attr_labels, attr_preds, mask):
     obj_preds = torch.softmax(obj_preds, dim=-1)
     attr_preds = torch.softmax(attr_preds, dim=-1)
     comp_preds = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
@@ -30,15 +30,17 @@ def calc_acc(model, test_dataloader, close_setting=True, use_tune=False):
     comp_match = (obj_labels == obj_preds) * (attr_labels == attr_preds)
     return torch.sum(comp_match)
   
-  obj2idx, attr2idx = test_dataloader.dataset.obj2idx, test_dataloader.dataset.attr2idx
-  attr_class, obj_class = len(test_dataloader.dataset.attrs), len(test_dataloader.dataset.objs)
-  pairs = test_dataloader.dataset.test_pairs
-  pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in pairs])
-  mask = torch.zeros((attr_class, obj_class))
-  mask[(pair_idx[:, 0], pair_idx[:, 1])] = 1
+  def getClosedWorldMask(test_dataloader):
+    obj2idx, attr2idx = test_dataloader.dataset.obj2idx, test_dataloader.dataset.attr2idx
+    attr_class, obj_class = len(test_dataloader.dataset.attrs), len(test_dataloader.dataset.objs)
+    pairs = test_dataloader.dataset.test_pairs
+    pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in pairs])
+    mask = torch.zeros((attr_class, obj_class))
+    mask[(pair_idx[:, 0], pair_idx[:, 1])] = 1
+    return mask
 
   obj_match, attr_match, comp_match, comp_closed_match = 0, 0, 0, 0
-  
+  mask = getClosedWorldMask(test_dataloader)
   with torch.no_grad():
     model.eval()
     for i, batch in tqdm.tqdm(
@@ -53,5 +55,5 @@ def calc_acc(model, test_dataloader, close_setting=True, use_tune=False):
       obj_match += match(obj_id, obj_preds)
       attr_match += match(attr_id, attr_preds)
       comp_match += compoMatch(obj_id, obj_preds, attr_id, attr_preds)
-      comp_closed_match += compoMatchClosed(obj_id, obj_preds, attr_id, attr_preds)
+      comp_closed_match += compoMatchClosed(obj_id, obj_preds, attr_id, attr_preds, mask)
   return np.array([obj_match, attr_match, comp_match, comp_closed_match]) / len(test_dataloader.dataset)
