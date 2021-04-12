@@ -60,7 +60,7 @@ def compo_match(obj_labels, obj_preds, attr_labels, attr_preds, seen_mask, test_
   
   if test_compo_mask is not None: # For closed world, only keep compositions appeared in the test set.
     compo_preds_original *= test_compo_mask
-    compo_preds_original = softmax_compo_preds(compo_preds_original)
+  compo_preds_original = softmax_compo_preds(compo_preds_original)
     
   results = torch.zeros((2, len(symnet_biaslist)))
   for i, bias in enumerate(symnet_biaslist):
@@ -85,9 +85,10 @@ def analyse_acc_report(acc_table):
   seen, unseen = acc_table[0], acc_table[1]
   best_seen = torch.max(seen)
   best_unseen = torch.max(unseen)
-  best_harmonic = torch.max((seen * unseen) ** (1/2))
+  best_geometric = torch.max((seen * unseen) ** (1/2))
+  best_harmonic = torch.max(2/(1/seen + 1/unseen))
   auc = np.trapz(unseen, seen)
-  return best_seen, best_unseen, best_harmonic, auc
+  return best_seen, best_unseen, best_geometric, best_harmonic, auc
   
   
 def eval_model(model, test_dataloader, train_dataloader):
