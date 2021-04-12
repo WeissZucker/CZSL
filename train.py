@@ -192,8 +192,8 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
       attr_running_loss += attr_loss.item()
       epoch_steps += 1
       if i % 100 == 99:
-          print("[%d, %5d] obj_loss: %.3f, attr_loss: %.3f" % (epoch+1, i + 1,
-                                          obj_running_loss / epoch_steps, attr_running_loss / epoch_steps))
+#           print("[%d, %5d] obj_loss: %.3f, attr_loss: %.3f" % (epoch+1, i + 1,
+#                                           obj_running_loss / epoch_steps, attr_running_loss / epoch_steps))
           obj_loss_history[0].append(obj_running_loss/epoch_steps)
           attr_loss_history[0].append(attr_running_loss/epoch_steps)
           running_loss = 0.0
