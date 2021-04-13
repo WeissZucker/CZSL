@@ -33,6 +33,24 @@ def match(labels, preds):
   preds = torch.argmax(preds, axis=-1)
   return torch.sum(preds == labels)
 
+def get_biaslist(compo_preds, obj_labels, attr_labels, seen_mask):
+  bs = len(compo_preds) # batch_size
+  unseen_ind = [seen_mask[attr, obj] == 0 for attr, obj in zip(attr_labels, obj_labels)]
+  preds_correct_label = compo_preds[bs, attr_labels, obj_labels]
+  seen_preds = (compo_preds * seen_mask).reshape(bs, -1)
+  max_seen_preds, _ = torch.max(seen_preds, 1)
+  # Only consider the cases when the target label is unseen
+  score_diff = max_seen_preds - preds_correct_label
+  correct_unseen_ind = [] # indices of correct predictions with target being unseen labels
+  for i, (attr, obj) in enumerate(zip(attr_labels, obj_labels)):
+    if torch.max(comop_preds[i]) == compo_preds[i, attr, obj] and seen_preds[attr, obj] == 0:
+      correct_unseen_ind.append(i)
+  
+  score_diff, _ = torch.sort(score_diff[correct_unseen_ind])
+  bin_size = 100
+  bias_skip = max(len(score_diff) // bin_size, 1)
+  biaslist = score_diff[::bias_skip]
+  return biaslist
 
 def compo_match(obj_labels, obj_preds, attr_labels, attr_preds, seen_mask, test_compo_mask=None):
   """Calculate match count lists for each bias term for seen and unseen.
@@ -57,13 +75,13 @@ def compo_match(obj_labels, obj_preds, attr_labels, attr_preds, seen_mask, test_
   obj_preds = torch.softmax(obj_preds, dim=-1)
   attr_preds = torch.softmax(attr_preds, dim=-1)
   compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
+  biaslist = get_biaslist(compo_preds_original, obj_labels, attr_labels, seen_mask)
   
   if test_compo_mask is not None: # For closed world, only keep compositions appeared in the test set.
     compo_preds_original *= test_compo_mask
-  compo_preds_original = softmax_compo_preds(compo_preds_original)
     
-  results = torch.zeros((2, len(symnet_biaslist)))
-  for i, bias in enumerate(symnet_biaslist):
+  results = torch.zeros((2, len(biaslist)))
+  for i, bias in enumerate(biaslist):
     compo_preds = compo_preds_original.clone()
     compo_preds += seen_mask * bias # add bias term to seen composition
     compo_preds = softmax_compo_preds(compo_preds)
@@ -96,10 +114,8 @@ def eval_model(model, test_dataloader, train_dataloader):
   report: best_seen, best_unseen, best_harmonic, auc
   """
   obj_match, attr_match = 0, 0
-  test_compo_mask = getCompoMask(test_dataloader) # 2d (attr x obj) matrix, with compositions appeared in the test dataset being marked as 1.
-  seen_compo_mask = getCompoMask(train_dataloader) # mask of compositions seen during training
-#   unseen_compo_OW_mask = 1 - seen_compo_mask # mask of compositions not seen during training in the open world setting
-#   unseen_compo_CW_mask = test_compo_mask * unseen_compo_OW_mask # mask of compositions not seen during training in the closed world setting
+  test_mask = getCompoMask(test_dataloader) # 2d (attr x obj) matrix, with compositions appeared in the test dataset being marked as 1.
+  seen_mask = getCompoMask(train_dataloader) # mask of compositions seen during training
   matches_cw = torch.zeros((2, len(symnet_biaslist)))
   matches_ow = torch.zeros((2, len(symnet_biaslist)))
   with torch.no_grad():
@@ -114,8 +130,8 @@ def eval_model(model, test_dataloader, train_dataloader):
       obj_preds, attr_preds = obj_preds.cpu(), attr_preds.cpu()
       obj_match += match(obj_id, obj_preds)
       attr_match += match(attr_id, attr_preds)
-      matches_cw += compo_match(obj_id, obj_preds, attr_id, attr_preds, seen_compo_mask, test_compo_mask)
-      matches_ow += compo_match(obj_id, obj_preds, attr_id, attr_preds, seen_compo_mask)
+      matches_cw += compo_match(obj_id, obj_preds, attr_id, attr_preds, seen_mask, test_mask)
+      matches_ow += compo_match(obj_id, obj_preds, attr_id, attr_preds, seen_mask)
   obj_acc, attr_acc = obj_match / len(test_dataloader.dataset), attr_match / len(test_dataloader.dataset)
   report_cw = analyse_acc_report(matches_cw / len(test_dataloader.dataset))
   report_ow = analyse_acc_report(matches_ow / len(test_dataloader.dataset))
