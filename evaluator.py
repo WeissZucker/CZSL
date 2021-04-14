@@ -45,7 +45,7 @@ class Evaluator():
     preds_correct_label = compo_preds[range(nsample), attr_labels, obj_labels]
     seen_preds = (compo_preds * self.seen_mask).reshape(nsample, -1)
     max_seen_preds, _ = torch.max(seen_preds, 1)
-    score_diff = preds_correct_label - max_seen_preds - 1e-4
+    score_diff = max_seen_preds - preds_correct_label - 1e-4
 
     # only take samples with prediction being correct and target being unseen labels
     correct_prediction_mask = (torch.argmax(F.softmax(compo_preds.reshape(nsample, -1), -1),-1)
@@ -84,7 +84,7 @@ class Evaluator():
     results = torch.zeros((2, len(biaslist))).to(dev)
     target_label_seen_mask = self.seen_mask[attr_labels, obj_labels]
     for i, bias in enumerate(biaslist):
-      compo_preds = compo_preds_original + self.seen_mask * bias # add bias term to seen composition
+      compo_preds = compo_preds_original + self.unseen_mask_ow * bias # add bias term to unseen composition
       matches = _compo_match(compo_preds, obj_labels, attr_labels)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches) - results[0, i]
@@ -101,7 +101,7 @@ class Evaluator():
     best_unseen = torch.max(unseen)
     best_geometric = torch.max((seen * unseen) ** (1/2))
     best_harmonic = torch.max(2/(1/seen + 1/unseen))
-    auc = np.trapz(unseen, seen)
+    auc = np.trapz(seen, unseen)
     return best_seen, best_unseen, best_harmonic, auc
 
 
