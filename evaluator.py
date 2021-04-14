@@ -99,8 +99,7 @@ class Evaluator():
     seen, unseen = acc_table[0].cpu(), acc_table[1].cpu()
     best_seen = torch.max(seen)
     best_unseen = torch.max(unseen)
-    best_geometric = torch.max((seen * unseen) ** (1/2))
-    best_harmonic = torch.max(2/(1/seen + 1/unseen))
+    best_harmonic = torch.max((seen * unseen) ** (1/2))
     auc = np.trapz(seen, unseen)
     return best_seen, best_unseen, best_harmonic, auc
 
