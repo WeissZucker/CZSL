@@ -118,8 +118,6 @@ class Evaluator():
           leave=True):
         img, attr_id, obj_id = batch[:3]
         preds = net(img.to(dev))
-#         obj_preds.append(preds[0].cpu())
-#         attr_preds.append(preds[1].cpu())
         obj_preds.append(preds[0])
         attr_preds.append(preds[1])
         obj_labels.append(obj_id.to(dev))
