@@ -18,7 +18,7 @@ class Evaluator():
     
     self.test_mask = self.getCompoMask(test_dataloader) # 2d (attr x obj) matrix, with compositions appeared in the test dataset being marked as 1.
     self.seen_mask = self.getCompoMask(train_dataloader) # mask of compositions seen during training
-    self.unseen_mask_ow = 1 - self.seen_mask # mask of compositions not seen during training in the open world setting
+    self.unseen_mask_ow = ~self.seen_mask # mask of compositions not seen during training in the open world setting
     self.unseen_mask_cw = self.test_mask * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
   
   def getCompoMask(self, dataloader):
@@ -30,8 +30,8 @@ class Evaluator():
     else:
       pairs = dataloader.dataset.test_pairs
     pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in pairs])
-    mask = torch.zeros((attr_class, obj_class))
-    mask[(pair_idx[:, 0], pair_idx[:, 1])] = 1
+    mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
+    mask[(pair_idx[:, 0], pair_idx[:, 1])] = True
     return mask
 
 
@@ -84,7 +84,7 @@ class Evaluator():
     if not open_world: # For closed world, only keep compositions appeared in the test set.
       compo_preds_original *= self.test_mask
 
-    results = torch.zeros((2, len(biaslist)))
+    results = torch.zeros((2, len(biaslist))).to(dev)
     for i, bias in enumerate(biaslist):
       compo_preds = compo_preds_original.clone()
       compo_preds += self.seen_mask * bias # add bias term to seen composition
@@ -104,7 +104,7 @@ class Evaluator():
     """acc_table: [2 x biaslist_size] with first row for seen and second row for unseen.
     Return: best_seen, best_unseen, best_harmonic, auc
     """
-    seen, unseen = acc_table[0], acc_table[1]
+    seen, unseen = acc_table[0].cpu(), acc_table[1].cpu()
     best_seen = torch.max(seen)
     best_unseen = torch.max(unseen)
     best_geometric = torch.max((seen * unseen) ** (1/2))
@@ -127,10 +127,12 @@ class Evaluator():
           leave=True):
         img, attr_id, obj_id = batch[:3]
         preds = net(img.to(dev))
-        obj_preds.append(preds[0].cpu())
-        attr_preds.append(preds[1].cpu())
-        obj_labels.append(obj_id)
-        attr_labels.append(attr_id)
+#         obj_preds.append(preds[0].cpu())
+#         attr_preds.append(preds[1].cpu())
+        obj_preds.append(preds[0])
+        attr_preds.append(preds[1])
+        obj_labels.append(obj_id.to(dev))
+        attr_labels.append(attr_id.to(dev))
 
     obj_preds = torch.cat(obj_preds)
     attr_preds = torch.cat(attr_preds)
