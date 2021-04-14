@@ -13,6 +13,9 @@ class Evaluator():
     self.num_bias = num_bias
     self.train_dataloader = train_dataloader
     self.test_dataloader = test_dataloader
+    self.attr_class = len(train_dataloader.dataset.attrs)
+    self.obj_class = len(train_dataloader.dataset.objs)
+    
     self.test_mask = self.getCompoMask(test_dataloader) # 2d (attr x obj) matrix, with compositions appeared in the test dataset being marked as 1.
     self.seen_mask = self.getCompoMask(train_dataloader) # mask of compositions seen during training
     self.unseen_mask_ow = 1 - self.seen_mask # mask of compositions not seen during training in the open world setting
@@ -38,19 +41,16 @@ class Evaluator():
 
 
   def get_biaslist(self, compo_preds, obj_labels, attr_labels):
-    nsample = len(compo_preds) # batch_size
-    unseen_ind = [self.unseen_mask_cw[attr, obj] == 1 for attr, obj in zip(attr_labels, obj_labels)]
+    nsample = len(compo_preds)
     preds_correct_label = compo_preds[range(nsample), attr_labels, obj_labels]
     seen_preds = (compo_preds * self.seen_mask).reshape(nsample, -1)
     max_seen_preds, _ = torch.max(seen_preds, 1)
-    # Only consider the cases when the target label is unseen
-    score_diff = max_seen_preds - preds_correct_label
-    correct_unseen_ind = [] # indices of correct predictions with target being unseen labels
-    for i, (attr, obj) in enumerate(zip(attr_labels, obj_labels)):
-      if torch.max(compo_preds[i]) == compo_preds[i, attr, obj] and self.unseen_mask_cw[attr, obj] == 1:
-        correct_unseen_ind.append(i)
-
-    score_diff, _ = torch.sort(score_diff[correct_unseen_ind])
+    score_diff = preds_correct_label - max_seen_preds
+    
+    # only take samples with prediction being correct and target being unseen labels
+    correct_prediction_mask = torch.argmax(F.softmax(compo_preds.reshape(nsample, -1), -1),-1) == attr_labels*self.obj_class + obj_labels
+    target_label_unseen_mask = self.unseen_mask_cw[attr_labels, obj_labels]
+    score_diff, _ = torch.sort(score_diff[correct_prediction_mask * target_label_unseen_mask])
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
     return biaslist
