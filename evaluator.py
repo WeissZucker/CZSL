@@ -45,14 +45,16 @@ class Evaluator():
     preds_correct_label = compo_preds[range(nsample), attr_labels, obj_labels]
     seen_preds = (compo_preds * self.seen_mask).reshape(nsample, -1)
     max_seen_preds, _ = torch.max(seen_preds, 1)
-    score_diff = preds_correct_label - max_seen_preds
-    
+    score_diff = preds_correct_label - max_seen_preds - 1e-4
+
     # only take samples with prediction being correct and target being unseen labels
-    correct_prediction_mask = torch.argmax(F.softmax(compo_preds.reshape(nsample, -1), -1),-1) == attr_labels*self.obj_class + obj_labels
+    correct_prediction_mask = (torch.argmax(F.softmax(compo_preds.reshape(nsample, -1), -1),-1)
+                               == attr_labels*self.obj_class + obj_labels)
     target_label_unseen_mask = self.unseen_mask_cw[attr_labels, obj_labels]
     score_diff, _ = torch.sort(score_diff[correct_prediction_mask * target_label_unseen_mask])
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
+    
     return biaslist
 
 
@@ -71,11 +73,6 @@ class Evaluator():
       comp_match = (obj_labels == obj_preds) * (attr_labels == attr_preds)
       return comp_match
 
-    def softmax_compo_preds(comp_preds):
-      comp_preds_shape = comp_preds.shape
-      comp_preds = F.softmax(comp_preds.reshape(comp_preds_shape[0], -1), -1)
-      return comp_preds.reshape(comp_preds_shape)
-
     obj_preds = torch.softmax(obj_preds, dim=-1)
     attr_preds = torch.softmax(attr_preds, dim=-1)
     compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
@@ -85,18 +82,13 @@ class Evaluator():
       compo_preds_original *= self.test_mask
 
     results = torch.zeros((2, len(biaslist))).to(dev)
+    target_label_seen_mask = self.seen_mask[attr_labels, obj_labels]
     for i, bias in enumerate(biaslist):
-      compo_preds = compo_preds_original.clone()
-      compo_preds += self.seen_mask * bias # add bias term to seen composition
-      compo_preds = softmax_compo_preds(compo_preds)
+      compo_preds = compo_preds_original + self.seen_mask * bias # add bias term to seen composition
       matches = _compo_match(compo_preds, obj_labels, attr_labels)
-
-      for match, obj_label, attr_label in zip(matches, obj_labels, attr_labels):
-        if self.seen_mask[attr_label, obj_label] == 1:
-          results[0, i] += match
-        else:
-          results[1, i] += match
-
+      results[0, i] = torch.sum(matches[target_label_seen_mask])
+      results[1, i] = torch.sum(matches) - results[0, i]
+      
     return results / len(obj_labels)
 
 
@@ -110,7 +102,7 @@ class Evaluator():
     best_geometric = torch.max((seen * unseen) ** (1/2))
     best_harmonic = torch.max(2/(1/seen + 1/unseen))
     auc = np.trapz(unseen, seen)
-    return best_seen, best_unseen, best_geometric, best_harmonic, auc
+    return best_seen, best_unseen, best_harmonic, auc
 
 
   def eval_model(self, net):
@@ -142,7 +134,7 @@ class Evaluator():
     obj_acc = self.acc(obj_labels, obj_preds)
     attr_acc = self.acc(attr_labels, attr_preds)
     acc_cw = self.compo_acc(obj_labels, obj_preds, attr_labels, attr_preds)
-    acc_ow = self.compo_acc(obj_labels, obj_preds, attr_labels, attr_preds)
+    acc_ow = self.compo_acc(obj_labels, obj_preds, attr_labels, attr_preds, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw)
     report_ow = self.analyse_acc_report(acc_ow)
 
