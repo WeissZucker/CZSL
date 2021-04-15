@@ -89,7 +89,9 @@ class Evaluator():
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches) - results[0, i]
       
-    return results / len(obj_labels)
+    results[0] /= torch.sum(target_label_seen_mask)
+    results[1] /= torch.sum(~target_label_seen_mask)
+    return results
 
 
   def analyse_acc_report(self, acc_table):
