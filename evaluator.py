@@ -78,7 +78,7 @@ class Evaluator():
     compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
     biaslist = self.get_biaslist(compo_preds_original, obj_labels, attr_labels)
     if not open_world: # For closed world, only keep compositions appeared in the test set.
-      compo_preds_original[:,~self.close_mask] = -1e10
+      compo_preds_original[:,~self.test_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
     target_label_seen_mask = self.seen_mask[attr_labels, obj_labels]
