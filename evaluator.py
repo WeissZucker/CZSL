@@ -92,20 +92,21 @@ class Evaluator():
     obj_preds = torch.softmax(obj_preds, dim=-1)
     attr_preds = torch.softmax(attr_preds, dim=-1)
     compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
-    biaslist = self.get_biaslist(compo_preds_original, obj_labels, attr_labels)
+    biaslist = self.get_biaslist(compo_preds_original, self.obj_labels, self.attr_labels)
+    
     if not open_world: # For closed world, only keep compositions appeared in the test set.
-      compo_preds_original[:,~self.test_mask] = -1e10
+      compo_preds_original[:,~self.close_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
     target_label_seen_mask = self.seen_mask[self.attr_labels, self.obj_labels]
     for i, bias in enumerate(biaslist):
       if open_world:
-        compo_preds = compo_preds_original + self.unseen_mask_ow * bias # add bias term to unseen composition
+        compo_preds = compo_preds_original + self.unseen_mask_ow * bias
       else:
-        compo_preds = compo_preds_original + self.unseen_mask_cw * bias # add bias term to unseen composition
+        compo_preds = compo_preds_original + self.unseen_mask_cw * bias
       matches = _compo_match(compo_preds, self.obj_labels, self.attr_labels)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
-      results[1, i] = torch.sum(matches) - results[0, i]
+      results[1, i] = torch.sum(matches[~target_label_seen_mask])
       
     results[0] /= torch.sum(target_label_seen_mask)
     results[1] /= torch.sum(~target_label_seen_mask)
@@ -128,7 +129,7 @@ class Evaluator():
     """Return: Tuple of (closed_world_report, open_word_report).
     report: best_seen, best_unseen, best_harmonic, auc
     """
-    obj_preds, attr_preds = [], [], [], []
+    obj_preds, attr_preds = [], []
     with torch.no_grad():
       net.eval()
       for i, batch in tqdm.tqdm(
@@ -146,8 +147,8 @@ class Evaluator():
     obj_preds = torch.cat(obj_preds)
     attr_preds = torch.cat(attr_preds)
 
-    obj_acc = self.acc(obj_labels, obj_preds)
-    attr_acc = self.acc(attr_labels, attr_preds)
+    obj_acc = self.acc(self.obj_labels, obj_preds)
+    attr_acc = self.acc(self.attr_labels, attr_preds)
     acc_cw = self.compo_acc(obj_preds, attr_preds)
     acc_ow = self.compo_acc(obj_preds, attr_preds, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw)
