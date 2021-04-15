@@ -51,22 +51,27 @@ class Evaluator():
     return torch.sum(preds == labels) / len(preds)
 
 
-  def get_biaslist(self, compo_preds, obj_labels, attr_labels):
+  def get_biaslist(self, compo_preds):
     nsample = len(compo_preds)
-    preds_correct_label = compo_preds[range(nsample), attr_labels, obj_labels]
-    seen_preds = (compo_preds * self.seen_mask).reshape(nsample, -1)
+    preds_correct_label = compo_preds[range(nsample), self.attr_labels, self.obj_labels]
+    seen_preds = (compo_preds.reshape(nsample, -1)[:,self.seen_mask.reshape(-1)]).reshape(nsample, -1)
     max_seen_preds, _ = torch.max(seen_preds, 1)
     score_diff = max_seen_preds - preds_correct_label - 1e-4
-
+    
+    _compo_preds = compo_preds.clone()
+    _compo_preds[:,~self.close_mask] = -1e10
+    _compo_preds += self.unseen_mask_cw * 1e3
+    
     # only take samples with prediction being correct and target being unseen labels
-    correct_prediction_mask = (torch.argmax(F.softmax(compo_preds.reshape(nsample, -1), -1),-1)
-                               == attr_labels*self.obj_class + obj_labels)
-    target_label_unseen_mask = self.unseen_mask_cw[attr_labels, obj_labels]
+    correct_prediction_mask = (torch.argmax(_compo_preds.reshape(nsample, -1),-1)
+                               == self.attr_labels * self.obj_class + self.obj_labels)
+    target_label_unseen_mask = self.unseen_mask_cw[self.attr_labels, self.obj_labels]
     score_diff, _ = torch.sort(score_diff[correct_prediction_mask * target_label_unseen_mask])
+
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
-    
-    return biaslist
+
+    return biaslist.cpu()
 
 
   def compo_acc(self, obj_preds, attr_preds, open_world=False):
