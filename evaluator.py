@@ -9,30 +9,41 @@ else:
   dev = "cpu" 
 
 class Evaluator():
-  def __init__(self, train_dataloader, test_dataloader, num_bias):
+  def __init__(self, test_dataloader, num_bias):
     self.num_bias = num_bias
-    self.train_dataloader = train_dataloader
     self.test_dataloader = test_dataloader
-    self.attr_class = len(train_dataloader.dataset.attrs)
-    self.obj_class = len(train_dataloader.dataset.objs)
+    self.attr_class = len(test_dataloader.dataset.attrs)
+    self.obj_class = len(test_dataloader.dataset.objs)
+    self.attr_labels, self.obj_labels = self.getLabels(dataloader)
     
-    self.test_mask = self.getCompoMask(test_dataloader) # 2d (attr x obj) matrix, with compositions appeared in the test dataset being marked as 1.
-    self.seen_mask = self.getCompoMask(train_dataloader) # mask of compositions seen during training
+    self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
+    self.close_mask = self.test_mask + self.seen_mask
     self.unseen_mask_ow = ~self.seen_mask # mask of compositions not seen during training in the open world setting
-    self.unseen_mask_cw = self.test_mask * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
+    self.unseen_mask_cw = self.close_mask * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
+  
+  def getLabels(self, dataloader):
+    obj_labels, attr_labels = [], []
+    for batch in dataloader:
+      img, attr_id, obj_id = batch[:3]
+      obj_labels.append(obj_id.to(dev))
+      attr_labels.append(attr_id.to(dev))
+    obj_labels = torch.cat(obj_labels)
+    attr_labels = torch.cat(attr_labels)
+    return attr_labels, obj_labels
   
   def getCompoMask(self, dataloader):
     """Mask of (attr x obj) matrix with compositions appeared in the dataset being marked as 1."""
     obj2idx, attr2idx = dataloader.dataset.obj2idx, dataloader.dataset.attr2idx
     attr_class, obj_class = len(dataloader.dataset.attrs), len(dataloader.dataset.objs)
-    if dataloader.dataset.phase == 'train':
-      pairs = dataloader.dataset.train_pairs
-    else:
-      pairs = dataloader.dataset.test_pairs
-    pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in pairs])
-    mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
-    mask[(pair_idx[:, 0], pair_idx[:, 1])] = True
-    return mask
+    train_pairs, test_pairs = dataloader.dataset.train_pairs, dataloader.dataset.test_pairs
+    
+    train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
+    test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
+    closed_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
+    seen_mask = torch.zeros_like(closed_mask)
+    closed_mask[(test_pair_idx[:, 0], test_pair_idx[:, 1])] = True
+    seen_mask[(train_pair_idx[:, 0], train_pair_idx[:, 1])] = True
+    return closed_mask, seen_mask
 
 
   def acc(self, labels, preds):
@@ -58,7 +69,7 @@ class Evaluator():
     return biaslist
 
 
-  def compo_acc(self, obj_labels, obj_preds, attr_labels, attr_preds, open_world=False):
+  def compo_acc(self, obj_preds, attr_preds, open_world=False):
     """Calculate match count lists for each bias term for seen and unseen.
     Return: [2 x biaslist_size] with first row for seen and second row for unseen.
     """
@@ -81,13 +92,13 @@ class Evaluator():
       compo_preds_original[:,~self.test_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
-    target_label_seen_mask = self.seen_mask[attr_labels, obj_labels]
+    target_label_seen_mask = self.seen_mask[self.attr_labels, self.obj_labels]
     for i, bias in enumerate(biaslist):
       if open_world:
         compo_preds = compo_preds_original + self.unseen_mask_ow * bias # add bias term to unseen composition
       else:
         compo_preds = compo_preds_original + self.unseen_mask_cw * bias # add bias term to unseen composition
-      matches = _compo_match(compo_preds, obj_labels, attr_labels)
+      matches = _compo_match(compo_preds, self.obj_labels, self.attr_labels)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches) - results[0, i]
       
@@ -112,7 +123,7 @@ class Evaluator():
     """Return: Tuple of (closed_world_report, open_word_report).
     report: best_seen, best_unseen, best_harmonic, auc
     """
-    obj_preds, obj_labels, attr_preds, attr_labels = [], [], [], []
+    obj_preds, attr_preds = [], [], [], []
     with torch.no_grad():
       net.eval()
       for i, batch in tqdm.tqdm(
@@ -129,13 +140,11 @@ class Evaluator():
 
     obj_preds = torch.cat(obj_preds)
     attr_preds = torch.cat(attr_preds)
-    obj_labels = torch.cat(obj_labels)
-    attr_labels = torch.cat(attr_labels)
 
     obj_acc = self.acc(obj_labels, obj_preds)
     attr_acc = self.acc(attr_labels, attr_preds)
-    acc_cw = self.compo_acc(obj_labels, obj_preds, attr_labels, attr_preds)
-    acc_ow = self.compo_acc(obj_labels, obj_preds, attr_labels, attr_preds, open_world=True)
+    acc_cw = self.compo_acc(obj_preds, attr_preds)
+    acc_ow = self.compo_acc(obj_preds, attr_preds, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw)
     report_ow = self.analyse_acc_report(acc_ow)
 
