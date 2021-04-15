@@ -14,7 +14,7 @@ class Evaluator():
     self.test_dataloader = test_dataloader
     self.attr_class = len(test_dataloader.dataset.attrs)
     self.obj_class = len(test_dataloader.dataset.objs)
-    self.attr_labels, self.obj_labels = self.getLabels(dataloader)
+    self.attr_labels, self.obj_labels = self.getLabels(test_dataloader)
     
     self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
     self.close_mask = self.test_mask + self.seen_mask
@@ -70,7 +70,6 @@ class Evaluator():
 
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
-
     return biaslist.cpu()
 
 
@@ -92,9 +91,9 @@ class Evaluator():
     obj_preds = torch.softmax(obj_preds, dim=-1)
     attr_preds = torch.softmax(attr_preds, dim=-1)
     compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
-    biaslist = self.get_biaslist(compo_preds_original, self.obj_labels, self.attr_labels)
+    biaslist = self.get_biaslist(compo_preds_original)
     
-    if not open_world: # For closed world, only keep compositions appeared in the test set.
+    if not open_world:
       compo_preds_original[:,~self.close_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
@@ -141,8 +140,6 @@ class Evaluator():
         preds = net(img.to(dev))
         obj_preds.append(preds[0])
         attr_preds.append(preds[1])
-        obj_labels.append(obj_id.to(dev))
-        attr_labels.append(attr_id.to(dev))
 
     obj_preds = torch.cat(obj_preds)
     attr_preds = torch.cat(attr_preds)
