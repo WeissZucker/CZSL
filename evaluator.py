@@ -101,8 +101,7 @@ class Evaluator():
     seen, unseen = acc_table[0].cpu(), acc_table[1].cpu()
     best_seen = torch.max(seen)
     best_unseen = torch.max(unseen)
-    best_geometric = torch.max((seen * unseen) ** (1/2))
-    best_harmonic = torch.max(2/(1/seen + 1/unseen))
+    best_harmonic = torch.max((seen * unseen) ** (1/2))
     auc = np.trapz(seen, unseen)
     return best_seen, best_unseen, best_harmonic, auc
 
@@ -121,8 +120,6 @@ class Evaluator():
           leave=True):
         img, attr_id, obj_id = batch[:3]
         preds = net(img.to(dev))
-#         obj_preds.append(preds[0].cpu())
-#         attr_preds.append(preds[1].cpu())
         obj_preds.append(preds[0])
         attr_preds.append(preds[1])
         obj_labels.append(obj_id.to(dev))
