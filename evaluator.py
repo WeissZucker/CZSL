@@ -77,14 +77,16 @@ class Evaluator():
     attr_preds = torch.softmax(attr_preds, dim=-1)
     compo_preds_original = torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
     biaslist = self.get_biaslist(compo_preds_original, obj_labels, attr_labels)
-
     if not open_world: # For closed world, only keep compositions appeared in the test set.
-      compo_preds_original *= self.test_mask
+      compo_preds_original[:,~self.close_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
     target_label_seen_mask = self.seen_mask[attr_labels, obj_labels]
     for i, bias in enumerate(biaslist):
-      compo_preds = compo_preds_original + self.unseen_mask_ow * bias # add bias term to unseen composition
+      if open_world:
+        compo_preds = compo_preds_original + self.unseen_mask_ow * bias # add bias term to unseen composition
+      else:
+        compo_preds = compo_preds_original + self.unseen_mask_cw * bias # add bias term to unseen composition
       matches = _compo_match(compo_preds, obj_labels, attr_labels)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches) - results[0, i]
