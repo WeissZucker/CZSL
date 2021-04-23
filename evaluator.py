@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 import tqdm
 
 if torch.cuda.is_available():  
@@ -12,8 +13,8 @@ class BaseEvaluator():
   def __init__(self, test_dataloader, num_bias):
     self.num_bias = num_bias
     self.test_dataloader = test_dataloader
-    self.attr_class = len(test_dataloader.dataset.attrs)
-    self.obj_class = len(test_dataloader.dataset.objs)
+    self.attrs, self.objs = np.array(test_dataloader.dataloader.attrs), np.array(test_dataloader.dataloader.objs)
+    self.attr_class, self.obj_class = len(test_dataloader.dataset.attrs), len(test_dataloader.dataset.objs)
     self.attr_labels, self.obj_labels = self.getLabels(test_dataloader)
     
     self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
@@ -149,6 +150,61 @@ class CompoResnetEvaluator(BaseEvaluator):
     obj_scores = torch.cat(obj_scores)
     attr_scores = torch.cat(attr_scores)
     compo_scores = self.get_composcores(obj_scores, attr_scores)
+
+    obj_acc = self.acc(obj_scores, self.obj_labels)
+    attr_acc = self.acc(attr_scores, self.attr_labels)
+    acc_cw = self.compo_acc(compo_scores)
+    acc_ow = self.compo_acc(compo_scores, open_world=True)
+    report_cw = self.analyse_acc_report(acc_cw)
+    report_ow = self.analyse_acc_report(acc_ow)
+
+    return obj_acc, attr_acc, report_cw, report_ow
+
+  
+class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
+  def __init__(self, test_dataloader, num_bias, fscore_threshold):
+    super(CompoResnetEvaluatorFscore, self).__init__(test_dataloader, num_bias)
+    fscore = self.calc_fscore()
+    self.fscore_mask = fscore < fscore_threshold
+    
+  def calc_fscore(self):
+    def cos_sim(x, y):
+      return np.inner(x, y)/(norm(x)*norm(y))
+    fscore = torch.ones_like(self.seen_mask)
+    word2vec = KeyedVectors.load_word2vec_format('./GoogleNews-vectors-negative300.bin', binary=True)
+    cos = torch.nn.CosineSimilarity(dim=1)
+    for attr_id in range(len(self.attr_class)):
+      for obj_id in range(len(self.obj_class)):
+        if self.unseen_mask_ow[attr_id, obj_id]:
+          attr, obj = self.attrs[attr_id], self.objs[obj_id]
+          paired_attrs_with_obj = self.attrs[self.seen_mask[:, obj_id]]
+          paired_objs_with_attr = self.objs[self.seen_mask[attr_id, :]]
+          obj_score = max(cos_sim(word2vec[paired_objs_with_attr], word2vec[obj]))
+          attr_score = max(cos_sim(word2vec[paired_attrs_with_obj], word2vec[attr]))
+          fscore[attr_id, obj_id] = (obj_score + attr_score) / 2
+    return fscore
+  
+  def eval_model(self, net):
+    """Return: Tuple of (closed_world_report, open_word_report).
+    report: best_seen, best_unseen, best_harmonic, auc
+    """
+    obj_scores, attr_scores = [], []
+    with torch.no_grad():
+      net.eval()
+      for i, batch in tqdm.tqdm(
+          enumerate(self.test_dataloader),
+          total=len(self.test_dataloader),
+          position=0,
+          leave=True):
+        img, attr_id, obj_id = batch[:3]
+        scores = net(img.to(dev))
+        obj_scores.append(scores[0])
+        attr_scores.append(scores[1])
+
+    obj_scores = torch.cat(obj_scores)
+    attr_scores = torch.cat(attr_scores)
+    compo_scores = self.get_composcores(obj_scores, attr_scores)
+    compo_scores[:, self.fscore_mask] = -1e10
 
     obj_acc = self.acc(obj_scores, self.obj_labels)
     attr_acc = self.acc(attr_scores, self.attr_labels)
