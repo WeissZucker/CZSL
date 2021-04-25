@@ -166,7 +166,7 @@ class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
     super().__init__(test_dataloader, num_bias)
     self.word2vec_path = word2vec_path
     #fscore = self.calc_fscore()
-    fscore = torch.load('./fscore.pt')
+    self.fscore = torch.load('./fscore.pt')
     self.fscore_mask = fscore < fscore_threshold
     
   def calc_fscore(self):
@@ -188,7 +188,7 @@ class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
         fscore[attr_id, obj_id] = (obj_score + attr_score) / 2
     return fscore
   
-  def eval_model(self, net):
+  def eval_model(self, net, fscore_threshold=None):
     """Return: Tuple of (closed_world_report, open_word_report).
     report: best_seen, best_unseen, best_harmonic, auc
     """
@@ -213,7 +213,11 @@ class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
     attr_acc = self.acc(attr_scores, self.attr_labels)
     
     acc_cw = self.compo_acc(compo_scores)
-    compo_scores[:, self.fscore_mask] = -1e10
+    if fscore_threshold:
+      fscore_mask = fscore < fscore_threshold
+    else:
+      fscore_mask = self.fscore_mask
+    compo_scores[:, fscore_mask] = -1e10
     acc_ow = self.compo_acc(compo_scores, open_world=True)
     
     report_cw = self.analyse_acc_report(acc_cw)
