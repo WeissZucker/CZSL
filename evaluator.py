@@ -158,3 +158,63 @@ class CompoResnetEvaluator(BaseEvaluator):
     report_ow = self.analyse_acc_report(acc_ow)
 
     return obj_acc, attr_acc, report_cw, report_ow
+  
+class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
+  def __init__(self, test_dataloader, num_bias, fscore_threshold, word2vec_path):
+    super().__init__(test_dataloader, num_bias)
+    self.word2vec_path = word2vec_path
+    #fscore = self.calc_fscore()
+    fscore = torch.load('./fscore.pt')
+    self.fscore_mask = fscore < fscore_threshold
+    
+  def calc_fscore(self):
+    def cos_sim(x, y):
+      x, y = torch.tensor(x).to(dev), torch.tensor(y).unsqueeze(0).to(dev)
+      return cos(x, y)
+    fscore = torch.ones_like(self.seen_mask, dtype=torch.float)
+    word2vec = KeyedVectors.load_word2vec_format(self.word2vec_path, binary=True)
+    cos = torch.nn.CosineSimilarity(dim=1)
+    for i in tqdm.tqdm(range(self.attr_class * self.obj_class), total=self.attr_class*self.obj_class):
+      attr_id = i // self.obj_class
+      obj_id = i % self.obj_class
+      if self.unseen_mask_ow[attr_id, obj_id]:
+        attr, obj = self.attrs[attr_id], self.objs[obj_id]
+        paired_attrs_with_obj = self.attrs[self.seen_mask[:, obj_id].cpu()]
+        paired_objs_with_attr = self.objs[self.seen_mask[attr_id, :].cpu()]
+        obj_score = max(cos_sim(word2vec[paired_objs_with_attr], word2vec[obj]))
+        attr_score = max(cos_sim(word2vec[paired_attrs_with_obj], word2vec[attr]))
+        fscore[attr_id, obj_id] = (obj_score + attr_score) / 2
+    return fscore
+  
+  def eval_model(self, net):
+    """Return: Tuple of (closed_world_report, open_word_report).
+    report: best_seen, best_unseen, best_harmonic, auc
+    """
+    obj_scores, attr_scores = [], []
+    with torch.no_grad():
+      net.eval()
+      for i, batch in tqdm.tqdm(
+          enumerate(self.test_dataloader),
+          total=len(self.test_dataloader),
+          position=0,
+          leave=True):
+        img, attr_id, obj_id = batch[:3]
+        scores = net(img.to(dev))
+        obj_scores.append(scores[0])
+        attr_scores.append(scores[1])
+
+    obj_scores = torch.cat(obj_scores)
+    attr_scores = torch.cat(attr_scores)
+    compo_scores = self.get_composcores(obj_scores, attr_scores)
+
+    obj_acc = self.acc(obj_scores, self.obj_labels)
+    attr_acc = self.acc(attr_scores, self.attr_labels)
+    
+    acc_cw = self.compo_acc(compo_scores)
+    compo_scores[:, self.fscore_mask] = -1e10
+    acc_ow = self.compo_acc(compo_scores, open_world=True)
+    
+    report_cw = self.analyse_acc_report(acc_cw)
+    report_ow = self.analyse_acc_report(acc_ow)
+
+    return obj_acc, attr_acc, report_cw, report_ow
