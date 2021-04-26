@@ -167,7 +167,7 @@ class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
     self.word2vec_path = word2vec_path
     #fscore = self.calc_fscore()
     self.fscore = torch.load('./fscore.pt')
-    self.fscore_mask = fscore < fscore_threshold
+    self.fscore_mask = self.fscore < fscore_threshold
     
   def calc_fscore(self):
     def cos_sim(x, y):
