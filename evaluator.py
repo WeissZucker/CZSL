@@ -214,7 +214,7 @@ class CompoResnetEvaluatorFscore(CompoResnetEvaluator):
     
     acc_cw = self.compo_acc(compo_scores)
     if fscore_threshold:
-      fscore_mask = fscore < fscore_threshold
+      fscore_mask = self.fscore < fscore_threshold
     else:
       fscore_mask = self.fscore_mask
     compo_scores[:, fscore_mask] = -1e10
