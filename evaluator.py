@@ -39,11 +39,11 @@ class BaseEvaluator():
     
     train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
     test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
-    closed_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
-    seen_mask = torch.zeros_like(closed_mask)
-    closed_mask[(test_pair_idx[:, 0], test_pair_idx[:, 1])] = True
+    test_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
+    seen_mask = torch.zeros_like(test_mask)
+    test_mask[(test_pair_idx[:, 0], test_pair_idx[:, 1])] = True
     seen_mask[(train_pair_idx[:, 0], train_pair_idx[:, 1])] = True
-    return closed_mask, seen_mask
+    return test_mask, seen_mask
 
 
   def acc(self, preds, labels):
@@ -70,7 +70,7 @@ class BaseEvaluator():
 
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
-    return biaslist.cpu()
+    return list(biaslist.cpu())
 
 
   def compo_acc(self, compo_scores, topk=1, open_world=False):
@@ -85,7 +85,7 @@ class BaseEvaluator():
       _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
       topk_obj_preds = topk_preds % ncol
       topk_attr_preds = topk_preds// ncol
-      compo_match = (obj_labels == topk_obj_preds) * (attr_labels == topk_attr_preds)
+      compo_match = (obj_labels.unsqueeze(1) == topk_obj_preds) * (attr_labels.unsqueeze(1) == topk_attr_preds)
       compo_match = torch.any(compo_match, dim=-1)
       return compo_match
     
@@ -102,14 +102,15 @@ class BaseEvaluator():
         compo_scores = compo_scores_original + self.unseen_mask_ow * bias
       else:
         compo_scores = compo_scores_original + self.unseen_mask_cw * bias
-      matches = _compo_match(compo_scores, self.obj_labels, self.attr_labels)
+      matches = _compo_match(compo_scores, self.obj_labels, self.attr_labels, topk)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches[~target_label_seen_mask])
       
+    acc = torch.max(results[0] + results[1]) / len(compo_scores_original)
     results[0] /= torch.sum(target_label_seen_mask)
     results[1] /= torch.sum(~target_label_seen_mask)
     results = [result.cpu() for result in results]
-    return results
+    return acc, results
 
 
   def analyse_acc_report(self, acc_table):
@@ -153,9 +154,9 @@ class CompoResnetEvaluator(BaseEvaluator):
 
     obj_acc = self.acc(obj_scores, self.obj_labels)
     attr_acc = self.acc(attr_scores, self.attr_labels)
-    acc_cw = self.compo_acc(compo_scores, topk)
-    acc_ow = self.compo_acc(compo_scores, topk, open_world=True)
-    report_cw = self.analyse_acc_report(acc_cw)
-    report_ow = self.analyse_acc_report(acc_ow)
+    acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
+    acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
+    report_cw = self.analyse_acc_report(acc_cw_biased)
+    report_ow = self.analyse_acc_report(acc_ow_biased)
 
-    return obj_acc, attr_acc, report_cw, report_ow
+    return obj_acc, attr_acc, acc_cw, report_cw, acc_ow,report_ow
