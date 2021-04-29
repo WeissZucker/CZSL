@@ -73,19 +73,20 @@ class BaseEvaluator():
     return biaslist.cpu()
 
 
-  def compo_acc(self, compo_scores, open_world=False):
+  def compo_acc(self, compo_scores, topk=1, open_world=False):
     """Calculate match count lists for each bias term for seen and unseen.
     Return: [2 x biaslist_size] with first row for seen and second row for unseen.
     """
-    def _compo_match(compo_scores, obj_labels, attr_labels):
+    def _compo_match(compo_scores, obj_labels, attr_labels, topk=1):
       """compo_scores: [batch, attr_class, obj_class]
       Return the count of correct composition predictions.
       """
-      compo_scores_ncol = compo_scores.shape[-1]
-      compo_scores = torch.argmax(compo_scores.view(len(compo_scores), -1), dim=-1)
-      obj_preds = compo_scores % compo_scores_ncol
-      attr_preds = compo_scores // compo_scores_ncol
-      compo_match = (obj_labels == obj_preds) * (attr_labels == attr_preds)
+      ncol = compo_scores.shape[-1]
+      _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
+      topk_obj_preds = topk_preds % ncol
+      topk_attr_preds = topk_preds// ncol
+      compo_match = (obj_labels == topk_obj_preds) * (attr_labels == topk_attr_preds)
+      compo_match = torch.any(compo_match, dim=-1)
       return compo_match
     
     compo_scores_original = compo_scores.clone()
@@ -129,7 +130,7 @@ class CompoResnetEvaluator(BaseEvaluator):
     attr_preds = torch.softmax(attr_scores, dim=-1)
     return torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
   
-  def eval_model(self, net):
+  def eval_model(self, net, topk=1):
     """Return: Tuple of (closed_world_report, open_word_report).
     report: best_seen, best_unseen, best_harmonic, auc
     """
@@ -152,8 +153,8 @@ class CompoResnetEvaluator(BaseEvaluator):
 
     obj_acc = self.acc(obj_scores, self.obj_labels)
     attr_acc = self.acc(attr_scores, self.attr_labels)
-    acc_cw = self.compo_acc(compo_scores)
-    acc_ow = self.compo_acc(compo_scores, open_world=True)
+    acc_cw = self.compo_acc(compo_scores, topk)
+    acc_ow = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw)
     report_ow = self.analyse_acc_report(acc_ow)
 
