@@ -48,9 +48,13 @@ class BaseEvaluator():
 
 
   def acc(self, preds, labels):
-    preds = torch.argmax(preds, axis=-1)
-    return torch.sum(preds == labels) / len(preds)
-
+    """Calculate top-k accuracy"""
+    if len(preds.shape) == 1:
+      preds = preds.unsqueeze(-1)
+    if len(labels.shape) == 1:
+      labels = labels.unsqueeze(-1)
+    match = torch.any(preds == labels, dim=1).float()
+    return torch.mean(match)
 
   def get_biaslist(self, compo_preds):
     nsample = len(compo_preds)
@@ -106,8 +110,8 @@ class BaseEvaluator():
       matches = _compo_match(compo_scores, self.obj_labels, self.attr_labels, topk)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches[~target_label_seen_mask])
-      
     acc = torch.max(results[0] + results[1]) / len(compo_scores_original)
+   
     results[0] /= torch.sum(target_label_seen_mask)
     results[1] /= torch.sum(~target_label_seen_mask)
     results = [result.cpu() for result in results]
@@ -127,48 +131,56 @@ class BaseEvaluator():
 
 
 class Evaluator(BaseEvaluator):
-  def get_composcores(self, obj_scores, attr_scores):
+  def get_composcores(self, attr_scores, obj_scores):
     obj_preds = torch.softmax(obj_scores, dim=-1)
     attr_preds = torch.softmax(attr_scores, dim=-1)
     return torch.bmm(attr_preds.unsqueeze(2), obj_preds.unsqueeze(1))
   
-  def eval_model(self, net, topk=1):
-    """Return: Tuple of (closed_world_report, open_word_report).
-    report: best_seen, best_unseen, best_harmonic, auc
-    """
-    obj_scores, attr_scores = [], []
-    with torch.no_grad():
-      net.eval()
-      for i, batch in tqdm.tqdm(
-          enumerate(self.test_dataloader),
-          total=len(self.test_dataloader),
-          position=0,
-          leave=True):
-        img, attr_id, obj_id = batch[:3]
-        scores = net(img.to(dev))
-        obj_scores.append(scores[0])
-        attr_scores.append(scores[1])
-
-    obj_scores = torch.cat(obj_scores)
-    attr_scores = torch.cat(attr_scores)
-    compo_scores = self.get_composcores(obj_scores, attr_scores)
-
-    obj_acc = self.acc(obj_scores, self.obj_labels)
-    attr_acc = self.acc(attr_scores, self.attr_labels)
+  def get_primitive_preds(self, compo_scores, topk):
+    ncol = compo_scores.shape[-1]
+    _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
+    topk_obj_preds = topk_preds % ncol
+    topk_attr_preds = topk_preds // ncol
+    return topk_obj_preds, topk_attr_preds
+  
+  def summary(self, attr_preds, obj_preds, compo_scores, topk):
+    obj_acc = self.acc(obj_preds, self.obj_labels)
+    attr_acc = self.acc(attr_preds, self.attr_labels)
     acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
     acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
 
     return obj_acc, attr_acc, report_cw, report_ow
+  
+  def eval_primitive_scores(self, attr_scores, obj_scores, topk=1):
+    """Return: Tuple of (closed_world_report, open_word_report).
+    report: best_seen, best_unseen, best_harmonic, auc
+    """
+    compo_scores = self.get_composcores(attr_scores, obj_scores)
+    _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
+    _, attr_preds = torch.topk(attr_scores, topk, axis=-1)
+    return self.summary(attr_preds, obj_preds, compo_scores, topk)
+    
+  def eval_compo_scores(self, compo_scores, topk=1):
+    obj_preds, attr_preds = self.get_primitive_preds(compo_scores, topk)
+    _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
+    _, attr_preds = torch.topk(attr_scores, topk, axis=-1)
+    return self.summary(attr_preds, obj_preds, compo_scores, topk)
 
+    
   
 class EvaluatorWithFscore(Evaluator):
-  def __init__(self, test_dataloader, num_bias, fscore_threshold, word2vec_path):
+  def __init__(self, test_dataloader, num_bias, fscore_threshold, word2vec_path, fscore_path=None):
     super().__init__(test_dataloader, num_bias)
     self.word2vec_path = word2vec_path
-    #fscore = self.calc_fscore()
-    self.fscore = torch.load('./fscore.pt')
+    if fscore_path:
+      self.fscore = torch.load(fscore_path)
+    else:
+      self.fscore = self.calc_fscore()
+    self.update_threshold(fscore_threshold)
+    
+  def update_threshold(self, fscore_threshold):
     self.fscore_mask = self.fscore < fscore_threshold
     
   def calc_fscore(self):
@@ -190,39 +202,13 @@ class EvaluatorWithFscore(Evaluator):
         fscore[attr_id, obj_id] = (obj_score + attr_score) / 2
     return fscore
   
-  def eval_model(self, net, fscore_threshold=None):
-    """Return: Tuple of (closed_world_report, open_word_report).
-    report: best_seen, best_unseen, best_harmonic, auc
-    """
-    obj_scores, attr_scores = [], []
-    with torch.no_grad():
-      net.eval()
-      for i, batch in tqdm.tqdm(
-          enumerate(self.test_dataloader),
-          total=len(self.test_dataloader),
-          position=0,
-          leave=True):
-        img, attr_id, obj_id = batch[:3]
-        scores = net(img.to(dev))
-        obj_scores.append(scores[0])
-        attr_scores.append(scores[1])
-
-    obj_scores = torch.cat(obj_scores)
-    attr_scores = torch.cat(attr_scores)
-    compo_scores = self.get_composcores(obj_scores, attr_scores)
-
-    obj_acc = self.acc(obj_scores, self.obj_labels)
-    attr_acc = self.acc(attr_scores, self.attr_labels)
-    
-    acc_cw = self.compo_acc(compo_scores)
-    if fscore_threshold:
-      fscore_mask = self.fscore < fscore_threshold
-    else:
-      fscore_mask = self.fscore_mask
-    compo_scores[:, fscore_mask] = -1e10
-    acc_ow = self.compo_acc(compo_scores, open_world=True)
-    
-    report_cw = self.analyse_acc_report(acc_cw)
-    report_ow = self.analyse_acc_report(acc_ow)
+  def summary(self, attr_preds, obj_preds, compo_scores, topk):
+    obj_acc = self.acc(obj_preds, self.obj_labels)
+    attr_acc = self.acc(attr_preds, self.attr_labels)
+    acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
+    compo_scores[:, self.fscore_mask] = -1e10
+    acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
+    report_cw = self.analyse_acc_report(acc_cw_biased)
+    report_ow = self.analyse_acc_report(acc_ow_biased)
 
     return obj_acc, attr_acc, report_cw, report_ow
