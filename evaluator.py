@@ -143,15 +143,24 @@ class Evaluator(BaseEvaluator):
     topk_attr_preds = topk_preds // ncol
     return topk_obj_preds, topk_attr_preds
   
+  def format_summary(self, attr_acc, obj_acc, report_cw, report_op):
+    summary = dict()
+    summary['A'] = attr_acc
+    summary['O'] = obj_acc
+    bias_evals = ['Seen', 'Unseen', 'HM', 'AUC']
+    for eval, x in zip(bias_evals, report_cw): summary['Cw'+eval] = x
+    for eval, x in zip(bias_evals, report_op): summary['Op'+eval] = x
+    return summary
+  
   def summary(self, attr_preds, obj_preds, compo_scores, topk):
-    obj_acc = self.acc(obj_preds, self.obj_labels)
     attr_acc = self.acc(attr_preds, self.attr_labels)
+    obj_acc = self.acc(obj_preds, self.obj_labels)
     acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
     acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
 
-    return obj_acc, attr_acc, report_cw, report_ow
+    return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
   
   def eval_primitive_scores(self, attr_scores, obj_scores, topk=1):
     """Return: Tuple of (closed_world_report, open_word_report).
@@ -211,4 +220,4 @@ class EvaluatorWithFscore(Evaluator):
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
 
-    return obj_acc, attr_acc, report_cw, report_ow
+    return self.format_summary(obj_acc, attr_acc, report_cw, report_ow)
