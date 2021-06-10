@@ -156,7 +156,7 @@ def train_with_val(net, optimizer, criterion, num_epochs, obj_loss_history: List
     
     
 def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], attr_loss_history: List[List], batch_size, train_dataloader, 
-          test_dataloader=None, curr_epoch=0, model_name: str = "model", model_dir: str = None) -> None:
+          test_dataloader=None, evaluator=None curr_epoch=0, model_name: str = "model", model_dir: str = None) -> None:
   """
   Train the model.
   Parameters:
@@ -164,7 +164,8 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
     curr_epoch: the epoch number the model already been trained for.
     model_dir: directory to save model states.
   """
-
+  if evaluator:
+    logger = SummaryWriter()
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
     epoch_steps = 0
     obj_running_loss = 0.0
@@ -203,7 +204,7 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
       obj_test_loss = 0.0
       attr_test_loss = 0.0
       test_steps = 0
-
+      attr_scores, obj_scores = [], []
       net.eval()
       for i, batch in tqdm.tqdm(
             enumerate(test_dataloader),
@@ -213,6 +214,8 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
           with torch.no_grad():
               img, attr_id, obj_id = batch[:3]
               obj_pred, attr_pred = net(img.to(dev))
+              obj_scores.append(obj_pred.detach())
+              attr_scores.append(attr_pred.detach())
               obj_loss = criterion(obj_pred, obj_id.to(dev))
               attr_loss = criterion(attr_pred, attr_id.to(dev))
               obj_test_loss += obj_loss.cpu().numpy()
@@ -224,6 +227,13 @@ def train(net, optimizer, criterion, num_epochs, obj_loss_history: List[List], a
       print("[%d] obj_val_loss: %.3f, attr_val_loss: %.3f" % (epoch+1, obj_test_loss, attr_test_loss ))
       obj_loss_history[1].append(obj_test_loss)
       attr_loss_history[1].append(attr_test_loss)
+      
+      attr_scores = torch.cat(attr_scores)
+      obj_scores = torch.cat(obj_scores)
+      if evaluator:
+        summary = evaluator.eval_primitive_scores(attr_scores, obj_scores)
+        for key, value in summary.items():
+          logger.add_scalar(key, value, epoch)
    
     if model_dir:
       model_path = os.path.join(model_dir, f"{model_name}_{epoch}.pt")
