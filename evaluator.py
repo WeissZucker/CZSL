@@ -34,9 +34,11 @@ class BaseEvaluator():
   
   def getCompoMask(self, dataloader):
     """Mask of (attr x obj) matrix with compositions appeared in the dataset being marked as 1."""
-    obj2idx, attr2idx = dataloader.dataset.obj2idx, dataloader.dataset.attr2idx
-    attr_class, obj_class = len(dataloader.dataset.attrs), len(dataloader.dataset.objs)
-    train_pairs, test_pairs = dataloader.dataset.train_pairs, dataloader.dataset.test_pairs
+    dset = dataloader.dataset
+    obj2idx, attr2idx = dset.obj2idx, dset.attr2idx
+    attr_class, obj_class = len(dset.attrs), len(dset.objs)
+    train_pairs = dset.train_pairs      
+    test_pairs = dset.test_pairs if dset.phase == 'test' else dset.val_pairs
     
     train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
     test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
