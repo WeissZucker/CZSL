@@ -222,4 +222,4 @@ class EvaluatorWithFscore(Evaluator):
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
 
-    return self.format_summary(obj_acc, attr_acc, report_cw, report_ow)
+    return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
