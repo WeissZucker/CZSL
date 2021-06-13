@@ -37,9 +37,13 @@ class BaseEvaluator():
     dset = dataloader.dataset
     obj2idx, attr2idx = dset.obj2idx, dset.attr2idx
     attr_class, obj_class = len(dset.attrs), len(dset.objs)
-    train_pairs = dset.train_pairs      
-    test_pairs = dset.test_pairs if dset.phase == 'test' else dset.val_pairs
-    
+
+    train_pairs = dset.train_pairs
+    if dset.phase == 'test':
+      test_pairs = dset.test_pairs
+    elif dset.phase == 'val':
+      test_pairs = dset.val_pairs
+
     train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
     test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
     test_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
@@ -77,8 +81,10 @@ class BaseEvaluator():
 
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
-    return list(biaslist.cpu())
 
+    if len(biaslist) == 0:
+      biaslist = [0]
+    return list(biaslist)
 
   def compo_acc(self, compo_scores, topk=1, open_world=False):
     """Calculate match count lists for each bias term for seen and unseen.
@@ -118,7 +124,6 @@ class BaseEvaluator():
     results[1] /= torch.sum(~target_label_seen_mask)
     results = [result.cpu() for result in results]
     return acc, results
-
 
   def analyse_acc_report(self, acc_table):
     """acc_table: [2 x biaslist_size] with first row for seen and second row for unseen.

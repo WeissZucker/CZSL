@@ -167,6 +167,10 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
     model_dir: directory to save model states.
   """
   evaluator = Evaluator(val_dataloader, 20)
+  scheduler = None
+# scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=8, T_mult=2, eta_min=0.0001, last_epoch=-1)
+  iters = len(train_dataloader)
+
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
     epoch_steps = 0
     obj_running_loss = 0.0
@@ -180,6 +184,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
         postfix='Train: epoch %d/%d'%(epoch, curr_epoch+num_epochs)):
       optimizer.zero_grad()
       img, attr_id, obj_id = batch[:3]
+#       _, attr_id, obj_id, _, img = batch[:5]
       if len(img) == 1:
         # Batchnorm doesn't accept batch with size 1
         continue
@@ -189,7 +194,8 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       loss = obj_loss + attr_loss
       loss.backward()
       optimizer.step()
-
+      if scheduler:
+        scheduler.step(epoch + i / iters)
       obj_running_loss += obj_loss.item()
       attr_running_loss += attr_loss.item()
       epoch_steps += 1
@@ -197,7 +203,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
         logger.add_scalar('obj_loss/train', obj_running_loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
         logger.add_scalar('attr_loss/train', attr_running_loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
         running_loss = 0.0
-    
 
     # ==== Validation ====
     obj_test_loss = 0.0
@@ -212,6 +217,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
           leave=True):
       with torch.no_grad():
         img, attr_id, obj_id = batch[:3]
+#         _, attr_id, obj_id, _, img = batch[:5]
         obj_pred, attr_pred = net(img.to(dev))
         obj_scores.append(obj_pred.detach())
         attr_scores.append(attr_pred.detach())
@@ -237,16 +243,15 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
         logger.add_scalar('Acc/'+key, value, epoch)
     logger.add_scalar('obj_loss/test', obj_test_loss, epoch)
     logger.add_scalar('attr_loss/test', attr_test_loss, epoch)
-    
+
     if summary['OpAUC'] > best_auc:
       best_auc = summary['OpAUC']
       if save_path:
         torch.save({
                       'model_state_dict': net.state_dict(),
                       'optimizer_state_dict': optimizer.state_dict(),
-                      'obj_loss': obj_loss_history,
-                      'attr_loss': attr_loss_history,
                       'best_auc': best_auc,
+                      'epoch': epoch,
                       }, save_path)
         
   print("Finished training.")
