@@ -159,7 +159,7 @@ class Evaluator(BaseEvaluator):
     for eval, x in zip(bias_evals, report_op): summary['Op'+eval] = x
     return summary
   
-  def summary(self, attr_preds, obj_preds, compo_scores, topk):
+  def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
     attr_acc = self.acc(attr_preds, self.attr_labels)
     obj_acc = self.acc(obj_preds, self.obj_labels)
     acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
@@ -176,13 +176,13 @@ class Evaluator(BaseEvaluator):
     compo_scores = self.get_composcores(attr_scores, obj_scores)
     _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
     _, attr_preds = torch.topk(attr_scores, topk, axis=-1)
-    return self.summary(attr_preds, obj_preds, compo_scores, topk)
+    return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
     
   def eval_compo_scores(self, compo_scores, topk=1):
     obj_preds, attr_preds = self.get_primitive_preds(compo_scores, topk)
-    _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
-    _, attr_preds = torch.topk(attr_scores, topk, axis=-1)
-    return self.summary(attr_preds, obj_preds, compo_scores, topk)
+    _, obj_preds = torch.topk(obj_preds, topk, axis=-1)
+    _, attr_preds = torch.topk(attr_preds, topk, axis=-1)
+    return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
 
     
   
@@ -218,7 +218,7 @@ class EvaluatorWithFscore(Evaluator):
         fscore[attr_id, obj_id] = (obj_score + attr_score) / 2
     return fscore
   
-  def summary(self, attr_preds, obj_preds, compo_scores, topk):
+  def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
     obj_acc = self.acc(obj_preds, self.obj_labels)
     attr_acc = self.acc(attr_preds, self.attr_labels)
     acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
