@@ -119,8 +119,8 @@ def train_with_val(net, optimizer, criterion, num_epochs, obj_loss_history: List
             obj_pred, attr_pred = net(img.to(dev))
             obj_loss = criterion(obj_pred, obj_id.to(dev))
             attr_loss = criterion(attr_pred, attr_id.to(dev))
-            obj_val_loss += obj_loss.cpu().numpy()
-            attr_val_loss += attr_loss.cpu().numpy()
+            obj_val_loss += obj_loss.item()
+            attr_val_loss += attr_loss.item()
             val_steps += 1
     
     obj_val_loss /= val_steps
@@ -156,9 +156,13 @@ def train_with_val(net, optimizer, criterion, num_epochs, obj_loss_history: List
           os.remove(old_model)
     print("Finished training.")
     
-    
+def tqdm_iter(current_epoch, total_epoch, dataloader):
+  postfix = f'Train: epoch {epoch}/{total_epoch}'
+  return tqdm.tqdm(enumerate(dataloader), 
+                 total=len(dataloader), position=0, leave=True, postfix=postfix)
+
 def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          curr_epoch=0, best_auc=0, save_path=None) -> None:
+          evaluator, curr_epoch=0, best_auc=0, save_path=None) -> None:
   """
   Train the model.
   Parameters:
@@ -166,74 +170,49 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
     curr_epoch: the epoch number the model already been trained for.
     model_dir: directory to save model states.
   """
-  evaluator = Evaluator(val_dataloader, 20)
   scheduler = None
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=8, T_mult=2, eta_min=0.0001, last_epoch=-1)
   iters = len(train_dataloader)
 
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
     epoch_steps = 0
-    obj_running_loss = 0.0
-    attr_running_loss = 0.0
+    running_loss = defaultdict(lambda : 0)
     net.train()
-    for i, batch in tqdm.tqdm(
-        enumerate(train_dataloader),
-        total=len(train_dataloader),
-        position=0,
-        leave=True,
-        postfix='Train: epoch %d/%d'%(epoch, curr_epoch+num_epochs)):
+    for i, sample in tqdm_iter(epoch, curr_epoch+num_epochs, train_dataloader):
       optimizer.zero_grad()
-      img, attr_id, obj_id = batch[:3]
-#       _, attr_id, obj_id, _, img = batch[:5]
-      if len(img) == 1:
+      if len(sample[0]) == 1:
         # Batchnorm doesn't accept batch with size 1
         continue
-      obj_pred, attr_pred = net(img.to(dev))
-      obj_loss = criterion(obj_pred, obj_id.to(dev))
-      attr_loss = criterion(attr_pred, attr_id.to(dev))
-      loss = obj_loss + attr_loss
-      loss.backward()
+      output = net(sample)
+      total_loss, loss_dict = criterion(output, sample)
+      total_loss.backward()
       optimizer.step()
       if scheduler:
         scheduler.step(epoch + i / iters)
-      obj_running_loss += obj_loss.item()
-      attr_running_loss += attr_loss.item()
+      for key, loss in loss_dict:
+        running_loss[key] += loss
       epoch_steps += 1
       if i % 100 == 99:
-        logger.add_scalar('obj_loss/train', obj_running_loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
-        logger.add_scalar('attr_loss/train', attr_running_loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
-        running_loss = 0.0
+        for key, loss in running_loss:
+          logger.add_scalar(f'{key}/train', loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
+          running_loss[key] = 0.0
 
     # ==== Validation ====
-    obj_test_loss = 0.0
-    attr_test_loss = 0.0
+    test_running_loss = defaultdict(lambda: 0)
+    outputs = []
     test_steps = 0
-    attr_scores, obj_scores = [], []
     net.eval()
-    for i, batch in tqdm.tqdm(
-          enumerate(val_dataloader),
-          total=len(val_dataloader),
-          position=0,
-          leave=True):
+    for i, batch in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
       with torch.no_grad():
-        img, attr_id, obj_id = batch[:3]
-#         _, attr_id, obj_id, _, img = batch[:5]
-        obj_pred, attr_pred = net(img.to(dev))
-        obj_scores.append(obj_pred.detach())
-        attr_scores.append(attr_pred.detach())
-        obj_loss = criterion(obj_pred, obj_id.to(dev))
-        attr_loss = criterion(attr_pred, attr_id.to(dev))
-        obj_test_loss += obj_loss.cpu().numpy()
-        attr_test_loss += attr_loss.cpu().numpy()
+        sample = [v.to(dev) for v in batch[1:5]]
+        output = net(sample)
+        outputs.append(output)
+        total_loss, loss_dict = criterion(output, sample)
         test_steps += 1
-
-    obj_test_loss /= test_steps
-    attr_test_loss /= test_steps
-    print("[%d] obj_val_loss: %.3f, attr_val_loss: %.3f" % (epoch+1, obj_test_loss, attr_test_loss))
-
-    attr_scores = torch.cat(attr_scores)
-    obj_scores = torch.cat(obj_scores)
-    summary = evaluator.eval_primitive_scores(attr_scores, obj_scores)
+    for key, loss in test_running_loss:
+      logger.add_scalar(f'{key}/test', loss/test_steps, epoch)
+      
+    summary = evaluator.eval(outputs)
     for key, value in summary.items():
       if 'Op' in key:
         logger.add_scalar(key[2:]+'/op', value, epoch)
@@ -241,8 +220,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
         logger.add_scalar(key[2:]+'/cw', value, epoch)
       else:
         logger.add_scalar('Acc/'+key, value, epoch)
-    logger.add_scalar('obj_loss/test', obj_test_loss, epoch)
-    logger.add_scalar('attr_loss/test', attr_test_loss, epoch)
 
     if summary['OpAUC'] > best_auc:
       best_auc = summary['OpAUC']
@@ -255,4 +232,5 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
                       }, save_path)
         
   print("Finished training.")
+  logger.flush()
   return best_auc
