@@ -21,15 +21,12 @@ def primitive_scores_criterion(model_output, sample):
   total_loss = attr_loss + obj_loss
   return total_loss, loss_dict
 
-def compo_scores_criterion(model_output, sample):
-  return None, None
-'''
-  compo_score = model_output
-  attr_labels = sample[1].to(dev)
-  obj_labels = sample[2].to(dev)
-  attr_loss = cross_entropy_loss(attr_score, attr_labels)
-  obj_loss = cross_entropy_loss(obj_score, obj_labels)
-  loss_dict = {'attr_loss': attr_loss, 'obj_loss': obj_loss}
-  total_loss = attr_loss + obj_loss
-  return total_loss, loss_dict
-'''
+def contrastive_criterion(model_output, sample, margin=0.1):
+  compo_score = model_output # [batch_size, npairs]
+  pair_labels = sample[3].to(dev)
+  target_score = compo_score[pair_labels]
+  loss = margin - compo_score + target_score
+  loss = torch.max(loss, torch.zeros_like(loss))
+  loss = torch.mean(torch.sum(loss, dim=-1))
+  loss_dict = {'contra_loss': loss}
+  return loss, loss_dict
