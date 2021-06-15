@@ -1,16 +1,35 @@
 from symnet.utils import dataset as symnet_dataset
 import os
+import torch.nn as nn
 
-def get_dataset(dataset_name, phase, with_image=False, shuffle=False):
-  # Symnet output format
-  # train [img, attr_id, obj_id, pair_id, img_feature, img, attr_id, obj_id, pair_id, img_feature, aff_mask]
-  # test [img, attr_id, obj_id, pair_id, img_feature, aff_mask]
+class DummyLogger():
+  def add_scalar(self, a, b, c):
+    pass
   
-  # Target output format
-  # unique img id, img file path, label pair text, label pair id, label att id, label obj id
-  dataset = symnet_dataset.get_dataloader(dataset_name, phase, with_image=with_image, shuffle=shuffle).dataset
-  pairs = dataset.pairs
-  root = dataset.root
-  reform_output_func = lambda x: (hash(x[0]), os.path.join(root, x[0]), '_'.join(pairs[x[3]]), x[3], x[1], x[2])
-  return map(reform_output_func, dataset)
+  def flush(self):
+    pass
   
+cross_entropy_loss = nn.CrossEntropyLoss()
+  
+def primitive_scores_criterion(model_output, sample):
+  attr_scores, obj_scores = model_output
+  attr_labels = sample[1].to(dev)
+  obj_labels = sample[2].to(dev)
+  attr_loss = cross_entropy_loss(attr_scores, attr_labels)
+  obj_loss = cross_entropy_loss(obj_scores, obj_labels)
+  loss_dict = {'attr_loss': attr_loss, 'obj_loss': obj_loss}
+  total_loss = attr_loss + obj_loss
+  return total_loss, loss_dict
+
+def compo_scores_criterion(model_output, sample):
+  return None, None
+'''
+  compo_score = model_output
+  attr_labels = sample[1].to(dev)
+  obj_labels = sample[2].to(dev)
+  attr_loss = cross_entropy_loss(attr_score, attr_labels)
+  obj_loss = cross_entropy_loss(obj_score, obj_labels)
+  loss_dict = {'attr_loss': attr_loss, 'obj_loss': obj_loss}
+  total_loss = attr_loss + obj_loss
+  return total_loss, loss_dict
+'''
