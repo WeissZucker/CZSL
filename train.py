@@ -161,6 +161,15 @@ def tqdm_iter(current_epoch, total_epoch, dataloader):
   return tqdm.tqdm(enumerate(dataloader), 
                  total=len(dataloader), position=0, leave=True, postfix=postfix)
 
+def log_summary(summary, logger, epoch):
+  for key, value in summary.items():
+    if 'Op' in key:
+      logger.add_scalar(key[2:]+'/op', value, epoch)
+    elif 'Cw' in key:
+      logger.add_scalar(key[2:]+'/cw', value, epoch)
+    else:
+      logger.add_scalar('Acc/'+key, value, epoch)
+
 def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
           evaluator, curr_epoch=0, best_auc=0, save_path=None) -> None:
   """
@@ -213,13 +222,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       logger.add_scalar(f'{key}/test', loss/test_steps, epoch)
       
     summary = evaluator.eval(outputs)
-    for key, value in summary.items():
-      if 'Op' in key:
-        logger.add_scalar(key[2:]+'/op', value, epoch)
-      elif 'Cw' in key:
-        logger.add_scalar(key[2:]+'/cw', value, epoch)
-      else:
-        logger.add_scalar('Acc/'+key, value, epoch)
+    log_summary(summary, logger, epoch)
 
     if summary['OpAUC'] > best_auc:
       best_auc = summary['OpAUC']
