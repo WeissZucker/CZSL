@@ -138,6 +138,10 @@ class BaseEvaluator():
 
 
 class Evaluator(BaseEvaluator):
+  def __init__(self, test_dataloader, num_bias, take_compo_scores=True):
+    super.__init__(test_dataloader, num_bias)
+    self.take_compo_scores = take_compo_scores
+    
   def get_composcores(self, attr_scores, obj_scores):
     obj_preds = torch.softmax(obj_scores, dim=-1)
     attr_preds = torch.softmax(attr_scores, dim=-1)
@@ -183,6 +187,12 @@ class Evaluator(BaseEvaluator):
     _, obj_preds = torch.topk(obj_preds, topk, axis=-1)
     _, attr_preds = torch.topk(attr_preds, topk, axis=-1)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
+  
+  def eval_output(self, *args, topk=1):
+    if self.take_compo_scores:
+      return self.eval_compo_scores(*args, topk=topk)
+    else:
+      return self.eval_primitive_scores(*args, topk=topk)
 
     
   
