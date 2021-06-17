@@ -56,7 +56,6 @@ class CompoResnet(nn.Module):
     in_features = resnet.fc.in_features # 2048 for resnet101
     resnet.fc = Identity()
     self.resnet = resnet
-    
     self.fc = HalvingMLP(in_features, 800, num_layers=num_mlp_layers)            
     self.obj_fc = HalvingMLP(400, OBJ_CLASS, 1)
     self.attr_fc = HalvingMLP(400, ATTR_CLASS, 1)
@@ -66,7 +65,7 @@ class CompoResnet(nn.Module):
     img_features = self.fc(imgs)
     obj_pred = self.obj_fc(img_features[:, :400])
     attr_pred = self.attr_fc(img_features[:, 400:])
-    return obj_pred, attr_pred
+    return attr_pred, obj_pred
 
 class Contrastive(nn.Module):
   def __init__(self, resnet_name, num_mlp_layers, dataloader):
