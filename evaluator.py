@@ -139,7 +139,7 @@ class BaseEvaluator():
 
 class Evaluator(BaseEvaluator):
   def __init__(self, test_dataloader, num_bias, take_compo_scores=True):
-    super.__init__(test_dataloader, num_bias)
+    super().__init__(test_dataloader, num_bias)
     self.take_compo_scores = take_compo_scores
     
   def get_composcores(self, attr_scores, obj_scores):
@@ -197,8 +197,8 @@ class Evaluator(BaseEvaluator):
     
   
 class EvaluatorWithFscore(Evaluator):
-  def __init__(self, test_dataloader, num_bias, fscore_threshold, word2vec_path, fscore_path=None):
-    super().__init__(test_dataloader, num_bias)
+  def __init__(self, test_dataloader, num_bias, take_compo_scores, fscore_threshold, word2vec_path, fscore_path=None):
+    super().__init__(test_dataloader, num_bias, take_compo_scores)
     self.word2vec_path = word2vec_path
     if fscore_path:
       self.fscore = torch.load(fscore_path)
