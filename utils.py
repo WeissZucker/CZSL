@@ -1,6 +1,13 @@
 from symnet.utils import dataset as symnet_dataset
 import os
+import torch
 import torch.nn as nn
+
+
+if torch.cuda.is_available():  
+  dev = "cuda:0" 
+else:  
+  dev = "cpu" 
 
 class DummyLogger():
   def add_scalar(self, a, b, c):
@@ -24,7 +31,7 @@ def primitive_scores_criterion(model_output, sample):
 def contrastive_criterion(model_output, sample, margin=0.1):
   compo_score = model_output # [batch_size, npairs]
   pair_labels = sample[3].to(dev)
-  target_score = compo_score[pair_labels]
+  target_score = compo_score[range(len(compo_score)), pair_labels].unsqueeze(-1)
   loss = margin - compo_score + target_score
   loss = torch.max(loss, torch.zeros_like(loss))
   loss = torch.mean(torch.sum(loss, dim=-1))
