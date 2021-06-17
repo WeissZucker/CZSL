@@ -1,6 +1,7 @@
 from typing import *
 import os
 import tqdm
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -156,8 +157,8 @@ def train_with_val(net, optimizer, criterion, num_epochs, obj_loss_history: List
           os.remove(old_model)
     print("Finished training.")
     
-def tqdm_iter(current_epoch, total_epoch, dataloader):
-  postfix = f'Train: epoch {epoch}/{total_epoch}'
+def tqdm_iter(curr_epoch, total_epoch, dataloader):
+  postfix = f'Train: epoch {curr_epoch}/{total_epoch}'
   return tqdm.tqdm(enumerate(dataloader), 
                  total=len(dataloader), position=0, leave=True, postfix=postfix)
 
@@ -184,7 +185,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
   iters = len(train_dataloader)
 
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
-    epoch_steps = 0
     running_loss = defaultdict(lambda : 0)
     net.train()
     for i, sample in tqdm_iter(epoch, curr_epoch+num_epochs, train_dataloader):
@@ -198,30 +198,31 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       optimizer.step()
       if scheduler:
         scheduler.step(epoch + i / iters)
-      for key, loss in loss_dict:
+      for key, loss in loss_dict.items():
         running_loss[key] += loss
-      epoch_steps += 1
       if i % 100 == 99:
-        for key, loss in running_loss:
-          logger.add_scalar(f'{key}/train', loss/epoch_steps, epoch*(len(train_dataloader)/batch_size)+i/100)
+        for key, loss in running_loss.items():
+          logger.add_scalar(f'{key}/train', loss/i, epoch*(len(train_dataloader)/batch_size)+i/100)
           running_loss[key] = 0.0
 
     # ==== Validation ====
-    test_running_loss = defaultdict(lambda: 0)
+    test_loss = defaultdict(lambda: 0)
     outputs = []
-    test_steps = 0
     net.eval()
-    for i, batch in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
+    for i, sample in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
       with torch.no_grad():
-        sample = [v.to(dev) for v in batch[1:5]]
         output = net(sample)
         outputs.append(output)
         total_loss, loss_dict = criterion(output, sample)
-        test_steps += 1
-    for key, loss in test_running_loss:
-      logger.add_scalar(f'{key}/test', loss/test_steps, epoch)
+        for key, loss in loss_dict.items():
+          test_loss[key] += loss
+    for key, loss in test_loss.items():
+      loss /= len(val_dataloader) 
+      logger.add_scalar(f'{key}/test', loss, epoch)
+      print(f"{key}: {loss}", end=' - ')
+    print()
       
-    summary = evaluator.eval(outputs)
+    summary = evaluator.eval_output(outputs)
     log_summary(summary, logger, epoch)
 
     if summary['OpAUC'] > best_auc:
