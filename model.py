@@ -99,5 +99,5 @@ class Contrastive(nn.Module):
     imgs = sample[4].to(dev)
     img_features = self.img_fc(imgs)
     all_pair_features = self.get_pair_features(self.all_pair_attrs, self.all_pair_objs)
-    return torch.matmul(img_features, all_pair_features.T)
-
+    compo_scores = torch.matmul(img_features, all_pair_features.T)
+    return compo_scores
