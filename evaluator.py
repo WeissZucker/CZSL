@@ -188,11 +188,21 @@ class Evaluator(BaseEvaluator):
     _, attr_preds = torch.topk(attr_preds, topk, axis=-1)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
   
-  def eval_output(self, *args, topk=1):
+  def eval_output(self, output, topk=1):
     if self.take_compo_scores:
-      return self.eval_compo_scores(*args, topk=topk)
+      compo_scores = output
+      if isinstance(compo_scores, list):
+        compo_scores = torch.cat(compo_scores)
+      compo_scores = compo_scores.reshape(-1, self.attr_class, self.obj_class)
+      return self.eval_compo_scores(compo_scores, topk=topk)
     else:
-      return self.eval_primitive_scores(*args, topk=topk)
+      if isinstance(output, list):
+        attr_scores, obj_scores = zip(*output)
+        attr_scores = torch.cat(attr_scores)
+        obj_scores = torch.cat(obj_scores)
+      else:
+        attr_scores, obj_scores = output
+      return self.eval_primitive_scores(attr_scores, obj_scores, topk=topk)
 
     
   
