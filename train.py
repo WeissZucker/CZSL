@@ -185,6 +185,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
   iters = len(train_dataloader)
 
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
+    # ==== Training ====
     running_loss = defaultdict(lambda : 0)
     net.train()
     for i, sample in tqdm_iter(epoch, curr_epoch+num_epochs, train_dataloader):
@@ -199,7 +200,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       if scheduler:
         scheduler.step(epoch + i / iters)
       for key, loss in loss_dict.items():
-        running_loss[key] += loss
+        running_loss[key] += loss.item()
       if i % 100 == 99:
         for key, loss in running_loss.items():
           logger.add_scalar(f'{key}/train', loss/i, epoch*(len(train_dataloader)/batch_size)+i/100)
@@ -215,15 +216,18 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
         outputs.append(output)
         total_loss, loss_dict = criterion(output, sample)
         for key, loss in loss_dict.items():
-          test_loss[key] += loss
+          test_loss[key] += loss.item()
+          
+    summary = evaluator.eval_output(outputs)
+          
+    # ==== Logging ====
+    log_summary(summary, logger, epoch)
+    
     for key, loss in test_loss.items():
       loss /= len(val_dataloader) 
       logger.add_scalar(f'{key}/test', loss, epoch)
       print(f"{key}: {loss}", end=' - ')
     print()
-      
-    summary = evaluator.eval_output(outputs)
-    log_summary(summary, logger, epoch)
 
     if summary['OpAUC'] > best_auc:
       best_auc = summary['OpAUC']
