@@ -9,7 +9,7 @@ if torch.cuda.is_available():
 else:  
   dev = "cpu" 
 
-class BaseEvaluator():
+class _BaseEvaluator():
   def __init__(self, test_dataloader, num_bias):
     self.num_bias = num_bias
     self.test_dataloader = test_dataloader
@@ -137,7 +137,7 @@ class BaseEvaluator():
     return best_seen, best_unseen, best_harmonic, auc
 
 
-class Evaluator(BaseEvaluator):
+class Evaluator(_BaseEvaluator):
   def __init__(self, test_dataloader, num_bias, take_compo_scores=True):
     super().__init__(test_dataloader, num_bias)
     self.take_compo_scores = take_compo_scores
