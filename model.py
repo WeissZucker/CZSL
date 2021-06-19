@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from functools import partial
 from symnet.utils import dataset
@@ -73,8 +74,9 @@ class Contrastive(nn.Module):
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
     self.init_word_emb()
-    self.img_fc = HalvingMLP(in_features, 800, num_layers=num_mlp_layers)            
-    self.pair_fc = HalvingMLP(self.word_emb_dim*2, 800, num_layers=num_mlp_layers)
+    self.compo_dim = 800
+    self.img_fc = HalvingMLP(in_features, self.compo_dim, num_layers=num_mlp_layers)            
+    self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=num_mlp_layers)
     attr_ids = range(len(dataloader.dataset.attrs))
     obj_ids = range(len(dataloader.dataset.objs))
     all_pairs = product(attr_ids, obj_ids)
