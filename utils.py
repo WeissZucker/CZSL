@@ -17,7 +17,8 @@ class DummyLogger():
     pass
   
 cross_entropy_loss = nn.CrossEntropyLoss()
-  
+
+
 def primitive_scores_criterion(model_output, sample):
   attr_scores, obj_scores = model_output
   attr_labels = sample[1].to(dev)
@@ -31,9 +32,14 @@ def primitive_scores_criterion(model_output, sample):
 def contrastive_criterion(model_output, sample, margin=0.1):
   compo_score = model_output # [batch_size, npairs]
   pair_labels = sample[3].to(dev)
+  
   target_score = compo_score[range(len(compo_score)), pair_labels].unsqueeze(-1)
-  loss = margin - compo_score + target_score
+  loss = compo_score - target_score + margin
   loss = torch.max(loss, torch.zeros_like(loss))
-  loss = torch.mean(torch.sum(loss, dim=-1))
+  loss = torch.mean(torch.mean(loss, dim=-1))
   loss_dict = {'contra_loss': loss}
+  '''
+  loss = cross_entropy_loss(compo_score, pair_labels)
+  loss_dict = {'contra_loss': loss}
+  '''
   return loss, loss_dict
