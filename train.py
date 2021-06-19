@@ -204,7 +204,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       if i % 100 == 99:
         for key, loss in running_loss.items():
           logger.add_scalar(f'{key}/train', loss/i, epoch*len(train_dataloader)//100+i//100)
-          running_loss[key] = 0.0
 
     # ==== Validation ====
     test_loss = defaultdict(lambda: 0)
