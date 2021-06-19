@@ -95,7 +95,8 @@ class Contrastive(nn.Module):
     attr_embs = self.w2v_emb(attr_ids)
     obj_embs = self.w2v_emb(obj_ids)
     pair_embs = torch.cat((attr_embs, obj_embs), dim=-1)
-    return self.pair_fc(pair_embs)
+    pair_features = self.pair_fc(pair_embs)
+    return pair_features
 
   def forward(self, sample):
     imgs = sample[4].to(dev)

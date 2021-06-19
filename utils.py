@@ -10,6 +10,7 @@ else:
   dev = "cpu" 
 
 class DummyLogger():
+  log_dir = None
   def add_scalar(self, a, b, c):
     pass
   

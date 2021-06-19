@@ -235,7 +235,8 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
                       'model_state_dict': net.state_dict(),
                       'optimizer_state_dict': optimizer.state_dict(),
                       'best_auc': best_auc,
-                      'epoch': epoch,
+                      'epoch': epoch+1,
+                      'log_dir': logger.log_dir,
                       }, save_path)
         
   print("Finished training.")
