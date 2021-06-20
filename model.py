@@ -73,34 +73,39 @@ class Contrastive(nn.Module):
     super(Contrastive, self).__init__()
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
-    self.init_word_emb()
+    word2vec = KeyedVectors.load_word2vec_format('./GoogleNews-vectors-negative300.bin', binary=True)
+    vectors = torch.tensor(word2vec.vectors)
+    w2v_emb = nn.Embedding.from_pretrained(vectors, freeze=True)
+    w2v_idx_dict = word2vec.key_to_index
+    self.word_emb_dim = vectors.shape[-1]
+    self.init_pair_embs(dataloader, w2v_emb, w2v_idx_dict)
+    
     self.compo_dim = 800
     self.img_fc = HalvingMLP(in_features, self.compo_dim, num_layers=num_mlp_layers)            
     self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=num_mlp_layers)
-    attr_ids = range(len(dataloader.dataset.attrs))
-    obj_ids = range(len(dataloader.dataset.objs))
-    all_pairs = product(attr_ids, obj_ids)
-    all_pair_attrs, all_pair_objs = list(zip(*all_pairs))
-    self.all_pair_attrs = torch.tensor(all_pair_attrs).to(dev)
-    self.all_pair_objs = torch.tensor(all_pair_objs).to(dev)
     
-  def init_word_emb(self):
-    word2vec = KeyedVectors.load_word2vec_format('./GoogleNews-vectors-negative300.bin', binary=True)
-    vectors = torch.tensor(word2vec.vectors)
-    self.w2v_emb = nn.Embedding.from_pretrained(vectors, freeze=True)
-    self.w2v_idx_dict = word2vec.key_to_index
-    self.word_emb_dim = vectors.shape[-1]
-    
-  def get_pair_features(self, attr_ids, obj_ids):
-    attr_embs = self.w2v_emb(attr_ids)
-    obj_embs = self.w2v_emb(obj_ids)
-    pair_embs = torch.cat((attr_embs, obj_embs), dim=-1)
-    pair_features = self.pair_fc(pair_embs)
-    return pair_features
+  def init_pair_embs(self, dataloader, w2v_emb, w2v_idx_dict):
+      attr_labels = dataloader.dataset.attrs
+      obj_labels = dataloader.dataset.objs
+      all_pairs = product(attr_labels, obj_labels)
+      all_pairs_attr, all_pairs_obj = list(zip(*all_pairs))
+      all_pairs_attr = torch.tensor([w2v_idx_dict[label] for label in all_pairs_attr])
+      all_pairs_obj = torch.tensor([w2v_idx_dict[label] for label in all_pairs_obj])
+      all_pairs_attr_embs = w2v_emb(all_pairs_attr)
+      all_pairs_obj_embs = w2v_emb(all_pairs_obj)
+      self.all_pairs_emb = torch.cat((all_pairs_attr_embs, all_pairs_obj_embs), dim=-1).to(dev)
+      '''
+      attr_ids = range(len(self.attr_labels))
+      obj_ids = range(len(self.obj_labels))
+      all_pairs = product(attr_ids, obj_ids)
+      all_pair_attrs, all_pair_objs = list(zip(*all_pairs))
+      self.all_pair_attrs = torch.tensor(all_pair_attrs).to(dev)
+      self.all_pair_objs = torch.tensor(all_pair_objs).to(dev)
+      '''
 
   def forward(self, sample):
     imgs = sample[4].to(dev)
     img_features = self.img_fc(imgs)
-    all_pair_features = self.get_pair_features(self.all_pair_attrs, self.all_pair_objs)
+    all_pair_features = self.pair_fc(self.all_pairs_emb)
     compo_scores = torch.matmul(img_features, all_pair_features.T)
     return compo_scores
