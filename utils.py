@@ -1,4 +1,4 @@
-from symnet.utils import dataset as symnet_dataset
+from symnet.utils import dataset as dataset
 import os
 import torch
 import torch.nn as nn
@@ -19,8 +19,7 @@ class DummyLogger():
   
 cross_entropy_loss = nn.CrossEntropyLoss()
 
-
-def primitive_scores_criterion(model_output, sample):
+def primitive_cross_entropy_loss(model_output, sample):
   attr_scores, obj_scores = model_output
   attr_labels = sample[1].to(dev)
   obj_labels = sample[2].to(dev)
@@ -30,17 +29,19 @@ def primitive_scores_criterion(model_output, sample):
   total_loss = attr_loss + obj_loss
   return total_loss, loss_dict
 
-def contrastive_criterion(model_output, sample, margin=0.1):
+def contrastive_cross_entropy_loss(model_output, sample):
   compo_score = model_output # [batch_size, npairs]
   pair_labels = sample[3].to(dev)
-  
+  loss = cross_entropy_loss(compo_score, pair_labels)
+  loss_dict = {'contra_loss': loss}
+  return loss, loss_dict
+
+def contrastive_hinge_loss(model_output, sample, margin=0.1):
+  compo_score = model_output # [batch_size, npairs]
+  pair_labels = sample[3].to(dev)
   target_score = compo_score[range(len(compo_score)), pair_labels].unsqueeze(-1)
   loss = compo_score - target_score + margin
   loss = torch.max(loss, torch.zeros_like(loss))
   loss = torch.mean(torch.mean(loss, dim=-1))
   loss_dict = {'contra_loss': loss}
-  '''
-  loss = cross_entropy_loss(compo_score, pair_labels)
-  loss_dict = {'contra_loss': loss}
-  '''
   return loss, loss_dict
