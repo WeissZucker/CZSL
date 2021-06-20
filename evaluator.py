@@ -150,9 +150,9 @@ class Evaluator(_BaseEvaluator):
   def get_primitive_preds(self, compo_scores, topk):
     ncol = compo_scores.shape[-1]
     _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
-    topk_obj_preds = topk_preds % ncol
     topk_attr_preds = topk_preds // ncol
-    return topk_obj_preds, topk_attr_preds
+    topk_obj_preds = topk_preds % ncol
+    return topk_attr_preds, topk_obj_preds
   
   def format_summary(self, attr_acc, obj_acc, report_cw, report_op):
     summary = dict()
@@ -170,7 +170,6 @@ class Evaluator(_BaseEvaluator):
     acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
-
     return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
   
   def eval_primitive_scores(self, attr_scores, obj_scores, topk=1):
@@ -178,14 +177,12 @@ class Evaluator(_BaseEvaluator):
     report: best_seen, best_unseen, best_harmonic, auc
     """
     compo_scores = self.get_composcores(attr_scores, obj_scores)
-    _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
     _, attr_preds = torch.topk(attr_scores, topk, axis=-1)
+    _, obj_preds = torch.topk(obj_scores, topk, axis=-1)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
-    
+
   def eval_compo_scores(self, compo_scores, topk=1):
-    obj_preds, attr_preds = self.get_primitive_preds(compo_scores, topk)
-    _, obj_preds = torch.topk(obj_preds, topk, axis=-1)
-    _, attr_preds = torch.topk(attr_preds, topk, axis=-1)
+    attr_preds, obj_preds = self.get_primitive_preds(compo_scores, topk)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
   
   def eval_output(self, output, topk=1):
@@ -203,7 +200,6 @@ class Evaluator(_BaseEvaluator):
       else:
         attr_scores, obj_scores = output
       return self.eval_primitive_scores(attr_scores, obj_scores, topk=topk)
-
     
   
 class EvaluatorWithFscore(Evaluator):
