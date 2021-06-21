@@ -39,8 +39,8 @@ class _BaseEvaluator():
     attr_class, obj_class = len(dset.attrs), len(dset.objs)
 
     train_pairs = dset.train_pairs
-    pairs = {'train':dset.train_pairs, 'val':dset.val_pairs, 'test':dset.test_pairs}
-    test_pairs = phase[dset.phase]
+    phase2pair = {'train':dset.train_pairs, 'val':dset.val_pairs, 'test':dset.test_pairs}
+    test_pairs = phase2pair[dset.phase]
 
     train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
     test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
