@@ -27,6 +27,7 @@ class Identity(nn.Module):
 
   
 class HalvingMLP(nn.Module):
+  '''Output size of each layer except the last one is half of the input size'''
   def __init__(self, in_features, out_features, num_layers=None):
     super(HalvingMLP, self).__init__()
     layers = []
@@ -43,6 +44,25 @@ class HalvingMLP(nn.Module):
     
   def forward(self, x):
     return self.mlp(x)
+  
+class ParametricMLP(nn.Module):
+  '''Output size of each layer specified by [layer_sizes]'''
+  def __init__(self, in_features, out_features, layer_sizes):
+    super(ParametricMLP, self).__init__()
+    layers = []
+    for layer_size in layer_sizes:
+      layer = nn.Sequential(
+        nn.Linear(in_features, layer_size),
+        nn.BatchNorm1d(layer_size),
+        nn.ReLU(),
+        nn.Dropout())
+      layers.append(layer)
+      in_features = layer_size
+    layers.append(nn.Linear(in_features, out_features))
+    self.mlp = nn.Sequential(*layers)
+    
+  def forward(self, x):
+    return self.mlp(x)
 
 def frozen(model):
   for param in model.parameters():
@@ -51,25 +71,34 @@ def frozen(model):
 
 
 class CompoResnet(nn.Module):
-  def __init__(self, resnet_name, num_mlp_layers):
+  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
     super(CompoResnet, self).__init__()
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
     resnet.fc = Identity()
     self.resnet = resnet
-    self.fc = HalvingMLP(in_features, 800, num_layers=num_mlp_layers)            
-    self.obj_fc = HalvingMLP(400, OBJ_CLASS, 1)
-    self.attr_fc = HalvingMLP(400, ATTR_CLASS, 1)
+    
+    self.img_emb_size = 800
+    self.obj_classifier_input_size = 400
+    assert self.img_emb_size > self.obj_classifier_input_size
+    
+    if mlp_layer_sizes is not None:
+      assert isinstance(mlp_layer_sizes, list)
+      self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
+    else:
+      self.fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers)            
+    self.obj_fc = HalvingMLP(self.obj_classifier_input_size, OBJ_CLASS, 1)
+    self.attr_fc = HalvingMLP(self.img_emb_size-self.obj_classifier_input_size, ATTR_CLASS, 1)
 
   def forward(self, sample):
     imgs= sample[4].to(dev)
     img_features = self.fc(imgs)
-    obj_pred = self.obj_fc(img_features[:, :400])
-    attr_pred = self.attr_fc(img_features[:, 400:])
+    obj_pred = self.obj_fc(img_features[:, :self.obj_classifier_input_size])
+    attr_pred = self.attr_fc(img_features[:, self.obj_classifier_input_size:])
     return attr_pred, obj_pred
 
 class Contrastive(nn.Module):
-  def __init__(self, resnet_name, num_mlp_layers, dataloader):
+  def __init__(self, resnet_name, dataloader, mlp_layer_sizes=None, num_mlp_layers=1):
     super(Contrastive, self).__init__()
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
@@ -81,8 +110,13 @@ class Contrastive(nn.Module):
     self.init_pair_embs(dataloader, w2v_emb, w2v_idx_dict)
     
     self.compo_dim = 800
-    self.img_fc = HalvingMLP(in_features, self.compo_dim, num_layers=num_mlp_layers)            
-    self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=num_mlp_layers)
+    if mlp_layer_sizes is not None:
+      assert isinstance(mlp_layer_sizes, list)
+      self.img_fc = ParametricMLP(in_features, self.compo_dim, mlp_layer_sizes)
+    else:
+      self.img_fc = HalvingMLP(in_features, self.compo_dim, num_layers=num_mlp_layers)            
+
+    self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=1)
     
   def init_pair_embs(self, dataloader, w2v_emb, w2v_idx_dict):
       attr_labels = dataloader.dataset.attrs
@@ -107,5 +141,5 @@ class Contrastive(nn.Module):
     imgs = sample[4].to(dev)
     img_features = self.img_fc(imgs)
     all_pair_features = self.pair_fc(self.all_pairs_emb)
-    compo_scores = torch.matmul(img_features, all_pair_features.T)
+    compo_scores = F.normalize(torch.matmul(img_features, all_pair_features.T), dim=-1)
     return compo_scores
