@@ -98,10 +98,17 @@ class CompoResnet(nn.Module):
     return attr_pred, obj_pred
 
 class Contrastive(nn.Module):
-  def __init__(self, resnet_name, dataloader, mlp_layer_sizes=None, num_mlp_layers=1):
+  def __init__(self, dataloader, mlp_layer_sizes=[], num_mlp_layers=1, resnet_name=None):
     super(Contrastive, self).__init__()
-    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
-    in_features = resnet.fc.in_features # 2048 for resnet101
+    if resnet_name:
+      self.resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+      self.img_emb_dim = self.resnet.fc.in_features # 2048 for resnet101
+      self.resnet.fc = Identity()
+    else:
+      self.resnet = None
+      sample = next(iter(dataloader))
+      self.img_emb_dim = sample[4].size(-1)
+      
     word2vec = KeyedVectors.load_word2vec_format('./GoogleNews-vectors-negative300.bin', binary=True)
     vectors = torch.tensor(word2vec.vectors)
     w2v_emb = nn.Embedding.from_pretrained(vectors, freeze=True)
@@ -110,11 +117,12 @@ class Contrastive(nn.Module):
     self.init_pair_embs(dataloader, w2v_emb, w2v_idx_dict)
     
     self.compo_dim = 800
+    
     if mlp_layer_sizes is not None:
       assert isinstance(mlp_layer_sizes, list)
-      self.img_fc = ParametricMLP(in_features, self.compo_dim, mlp_layer_sizes)
+      self.img_fc = ParametricMLP(self.img_emb_dim, self.compo_dim, mlp_layer_sizes)
     else:
-      self.img_fc = HalvingMLP(in_features, self.compo_dim, num_layers=num_mlp_layers)            
+      self.img_fc = HalvingMLP(self.img_emb_dim, self.compo_dim, num_layers=num_mlp_layers)            
 
     self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=1)
     
@@ -128,18 +136,14 @@ class Contrastive(nn.Module):
       all_pairs_attr_embs = w2v_emb(all_pairs_attr)
       all_pairs_obj_embs = w2v_emb(all_pairs_obj)
       self.all_pairs_emb = torch.cat((all_pairs_attr_embs, all_pairs_obj_embs), dim=-1).to(dev)
-      '''
-      attr_ids = range(len(self.attr_labels))
-      obj_ids = range(len(self.obj_labels))
-      all_pairs = product(attr_ids, obj_ids)
-      all_pair_attrs, all_pair_objs = list(zip(*all_pairs))
-      self.all_pair_attrs = torch.tensor(all_pair_attrs).to(dev)
-      self.all_pair_objs = torch.tensor(all_pair_objs).to(dev)
-      '''
 
-  def forward(self, sample):
-    imgs = sample[4].to(dev)
-    img_features = self.img_fc(imgs)
-    all_pair_features = self.pair_fc(self.all_pairs_emb)
-    compo_scores = F.normalize(torch.matmul(img_features, all_pair_features.T), dim=-1)
+  def forward(self, sample, similarity_score_scale=1):
+    if self.resnet:
+      imgs = self.resnet(sample[0].to(dev))
+    else:
+      imgs = sample[4].to(dev)
+    img_features = F.normalize(self.img_fc(imgs), dim=1)
+    all_pair_features = F.normalize(self.pair_fc(self.all_pairs_emb), dim=1)
+  
+    compo_scores = 20*torch.matmul(img_features, all_pair_features.T)
     return compo_scores
