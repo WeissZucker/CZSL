@@ -15,7 +15,7 @@ class _BaseEvaluator():
     self.test_dataloader = test_dataloader
     self.attrs, self.objs = np.array(test_dataloader.dataset.attrs), np.array(test_dataloader.dataset.objs)
     self.attr_class, self.obj_class = len(self.attrs), len(self.objs)
-    self.attr_labels, self.obj_labels = self.getLabels(test_dataloader)
+    # self.attr_labels, self.obj_labels = self.getLabels(test_dataloader)
     
     self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
     self.close_mask = self.test_mask + self.seen_mask
@@ -183,7 +183,10 @@ class Evaluator(_BaseEvaluator):
     attr_preds, obj_preds = self.get_primitive_preds(compo_scores, topk)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
   
-  def eval_output(self, output, topk=1):
+  def eval_output(self, output, attr_labels, obj_labels, topk=1):
+    self.attr_labels = attr_labels
+    self.obj_labels = obj_labels
+
     if self.take_compo_scores:
       compo_scores = output
       if isinstance(compo_scores, list):
@@ -197,6 +200,9 @@ class Evaluator(_BaseEvaluator):
         obj_scores = torch.cat(obj_scores)
       else:
         attr_scores, obj_scores = output
+        
+      self.attr_labels, self.obj_labels = None, None
+      
       return self.eval_primitive_scores(attr_scores, obj_scores, topk=topk)
     
   
