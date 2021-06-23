@@ -208,14 +208,20 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
     # ==== Validation ====
     test_loss = defaultdict(lambda: 0)
     outputs = []
+    attr_labels, obj_labels = [], []
     net.eval()
     for i, sample in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
       with torch.no_grad():
         output = net(sample)
         outputs.append(output)
+        attr_labels.append(sample[1])
+        obj_labels.append(sample[2])
         total_loss, loss_dict = criterion(output, sample)
         for key, loss in loss_dict.items():
           test_loss[key] += loss.item()
+    attr_labels = torch.cat(attr_labels).to(dev)
+    obj_labels = torch.cat(obj_labels).to(dev)
+    summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
           
     summary = evaluator.eval_output(outputs)
           
