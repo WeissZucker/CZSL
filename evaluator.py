@@ -168,6 +168,7 @@ class Evaluator(_BaseEvaluator):
     acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw_biased)
     report_ow = self.analyse_acc_report(acc_ow_biased)
+    self.attr_labels, self.obj_labels = None, None # drop labels of old batch
     return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
   
   def eval_primitive_scores(self, attr_scores, obj_scores, topk=1):
@@ -200,9 +201,6 @@ class Evaluator(_BaseEvaluator):
         obj_scores = torch.cat(obj_scores)
       else:
         attr_scores, obj_scores = output
-        
-      self.attr_labels, self.obj_labels = None, None
-      
       return self.eval_primitive_scores(attr_scores, obj_scores, topk=topk)
     
   
