@@ -70,9 +70,9 @@ def frozen(model):
   return model
 
 
-class CompoResnet(nn.Module):
+class DoubleClassifier(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
-    super(CompoResnet, self).__init__()
+    super(DoubleClassifier, self).__init__()
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
     resnet.fc = Identity()
@@ -96,6 +96,7 @@ class CompoResnet(nn.Module):
     obj_pred = self.obj_fc(img_features[:, :self.obj_classifier_input_size])
     attr_pred = self.attr_fc(img_features[:, self.obj_classifier_input_size:])
     return attr_pred, obj_pred
+
 
 class Contrastive(nn.Module):
   def __init__(self, dataloader, mlp_layer_sizes=[], num_mlp_layers=1, resnet_name=None):
