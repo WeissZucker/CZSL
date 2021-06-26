@@ -134,19 +134,23 @@ class _BaseEvaluator():
     results[0] /= torch.sum(target_label_seen_mask)
     results[1] /= torch.sum(~target_label_seen_mask)
     results = [result.cpu() for result in results]
-    return acc, results
+    return acc, results, biaslist
 
-  def analyse_acc_report(self, acc_table):
+  def analyse_acc_report(self, acc_table, biaslist):
     """acc_table: [2 x biaslist_size] with first row for seen and second row for unseen.
     Return: best_seen, best_unseen, best_harmonic, auc
     """
     seen, unseen = acc_table[0].cpu(), acc_table[1].cpu()
     best_seen = torch.max(seen)
     best_unseen = torch.max(unseen)
-    best_harmonic = torch.max((seen * unseen) ** (1/2))
+    best_harmonic, loc = torch.topk((seen * unseen) ** (1/2), k=1)
     auc = np.trapz(seen, unseen)
-    return best_seen, best_unseen, best_harmonic, auc
-
+    bias = biaslist[loc]
+    return {'Seen': best_seen.item(),
+           'Unseen': best_unseen.item(),
+           'HM': best_harmonic.item(),
+           'AUC': auc,
+           'Bias': bias}
 
 class Evaluator(_BaseEvaluator):
   def __init__(self, test_dataloader, num_bias, take_compo_scores=True):
@@ -164,25 +168,21 @@ class Evaluator(_BaseEvaluator):
     topk_attr_preds = topk_preds // ncol
     topk_obj_preds = topk_preds % ncol
     return topk_attr_preds, topk_obj_preds
-  
-  def format_summary(self, attr_acc, obj_acc, report_cw, report_op):
-    summary = dict()
-    summary['A'] = attr_acc
-    summary['O'] = obj_acc
-    bias_evals = ['Seen', 'Unseen', 'HM', 'AUC']
-    for eval, x in zip(bias_evals, report_cw): summary['Cw'+eval] = x
-    for eval, x in zip(bias_evals, report_op): summary['Op'+eval] = x
-    return summary
-  
+
   def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
     attr_acc = self.acc(attr_preds, self.attr_labels)
     obj_acc = self.acc(obj_preds, self.obj_labels)
-    acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
-    acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
-    report_cw = self.analyse_acc_report(acc_cw_biased)
-    report_ow = self.analyse_acc_report(acc_ow_biased)
+    acc_cw, acc_cw_biased, cw_biaslist = self.compo_acc(compo_scores, topk)
+    acc_ow, acc_ow_biased, op_biaslist = self.compo_acc(compo_scores, topk, open_world=True)
+    report_cw = self.analyse_acc_report(acc_cw_biased, cw_biaslist)
+    report_ow = self.analyse_acc_report(acc_ow_biased, op_biaslist)
+    
+    report = {'A': attr_acc, 'O': obj_acc}
+    report.update({'Cw'+k:v for k, v in report_cw.items()})
+    report.update({'Op'+k:v for k, v in report_ow.items()})
+    
     self.attr_labels, self.obj_labels = None, None # drop labels of old batch
-    return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
+    return report
   
   def eval_primitive_scores(self, attr_scores, obj_scores, topk=1):
     """Return: Tuple of (closed_world_report, open_word_report).
@@ -251,12 +251,17 @@ class EvaluatorWithFscore(Evaluator):
     return fscore
   
   def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
-    obj_acc = self.acc(obj_preds, self.obj_labels)
     attr_acc = self.acc(attr_preds, self.attr_labels)
-    acc_cw, acc_cw_biased = self.compo_acc(compo_scores, topk)
+    obj_acc = self.acc(obj_preds, self.obj_labels)
+    acc_cw, acc_cw_biased, cw_biaslist = self.compo_acc(compo_scores, topk)
     compo_scores[:, self.fscore_mask] = -1e10
-    acc_ow, acc_ow_biased = self.compo_acc(compo_scores, topk, open_world=True)
-    report_cw = self.analyse_acc_report(acc_cw_biased)
-    report_ow = self.analyse_acc_report(acc_ow_biased)
-
-    return self.format_summary(attr_acc, obj_acc, report_cw, report_ow)
+    acc_ow, acc_ow_biased, op_biaslist = self.compo_acc(compo_scores, topk, open_world=True)
+    report_cw = self.analyse_acc_report(acc_cw_biased, cw_biaslist)
+    report_ow = self.analyse_acc_report(acc_ow_biased, op_biaslist)
+    
+    report = {'A': attr_acc, 'O': obj_acc}
+    report.update({'Cw'+k:v for k, v in report_cw.items()})
+    report.update({'Op'+k:v for k, v in report_ow.items()})
+    
+    self.attr_labels, self.obj_labels = None, None # drop labels of old batch
+    return report
