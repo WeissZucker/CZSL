@@ -28,7 +28,7 @@ class Identity(nn.Module):
   
 class HalvingMLP(nn.Module):
   '''Output size of each layer except the last one is half of the input size'''
-  def __init__(self, in_features, out_features, num_layers=None):
+  def __init__(self, in_features, out_features, num_layers=None, norm_output=False):
     super(HalvingMLP, self).__init__()
     layers = []
     for i in range(num_layers):
@@ -40,6 +40,8 @@ class HalvingMLP(nn.Module):
       layers.append(layer)
       in_features //= 2
     layers.append(nn.Linear(in_features, out_features))
+    if norm_output:
+      layers.append(nn.LayerNorm(out_features, elementwise_affine=False))
     self.mlp = nn.Sequential(*layers)
     
   def forward(self, x):
@@ -47,7 +49,7 @@ class HalvingMLP(nn.Module):
   
 class ParametricMLP(nn.Module):
   '''Output size of each layer specified by [layer_sizes]'''
-  def __init__(self, in_features, out_features, layer_sizes):
+  def __init__(self, in_features, out_features, layer_sizes, norm_output=False):
     super(ParametricMLP, self).__init__()
     layers = []
     for layer_size in layer_sizes:
@@ -59,6 +61,8 @@ class ParametricMLP(nn.Module):
       layers.append(layer)
       in_features = layer_size
     layers.append(nn.Linear(in_features, out_features))
+    if norm_output:
+      layers.append(nn.LayerNorm(out_features, elementwise_affine=False))
     self.mlp = nn.Sequential(*layers)
     
   def forward(self, x):
