@@ -21,6 +21,9 @@ class _BaseEvaluator():
     self.close_mask = self.test_mask + self.seen_mask
     self.unseen_mask_ow = ~self.seen_mask # mask of compositions not seen during training in the open world setting
     self.unseen_mask_cw = self.close_mask * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
+    
+    self.no_bias = False
+    self.preset_bias = False
   
   def getLabels(self, dataloader):
     obj_labels, attr_labels = [], []
@@ -50,7 +53,6 @@ class _BaseEvaluator():
     seen_mask[(train_pair_idx[:, 0], train_pair_idx[:, 1])] = True
     return test_mask, seen_mask
 
-
   def acc(self, preds, labels):
     """Calculate top-k accuracy"""
     if len(preds.shape) == 1:
@@ -59,8 +61,15 @@ class _BaseEvaluator():
       labels = labels.unsqueeze(-1)
     match = torch.any(preds == labels, dim=1).float()
     return torch.mean(match)
+  
+  def preset_biaslist(self, biaslist):
+    self.preset_bias = True
+    self.biaslist = biaslist
 
   def get_biaslist(self, compo_preds):
+    if self.no_bias:
+      return [0]
+    
     nsample = len(compo_preds)
     preds_correct_label = compo_preds[range(nsample), self.attr_labels, self.obj_labels]
     seen_preds = (compo_preds.reshape(nsample, -1)[:,self.seen_mask.reshape(-1)]).reshape(nsample, -1)
@@ -101,7 +110,11 @@ class _BaseEvaluator():
       return compo_match
     
     compo_scores_original = compo_scores.clone()
-    biaslist = self.get_biaslist(compo_scores_original)
+    if self.preset_bias:
+      biaslist = self.biaslist
+    else:
+      biaslist = self.get_biaslist(compo_scores_original)
+      self.biaslist = biaslist
     
     if not open_world:
       compo_scores_original[:,~self.close_mask] = -1e10
@@ -184,9 +197,10 @@ class Evaluator(_BaseEvaluator):
     attr_preds, obj_preds = self.get_primitive_preds(compo_scores, topk)
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
   
-  def eval_output(self, output, attr_labels, obj_labels, topk=1):
+  def eval_output(self, output, attr_labels, obj_labels, topk=1, no_bias=False):
     self.attr_labels = attr_labels
     self.obj_labels = obj_labels
+    self.no_bias = no_bias
 
     if self.take_compo_scores:
       compo_scores = output
