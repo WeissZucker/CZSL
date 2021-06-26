@@ -73,6 +73,31 @@ def frozen(model):
     param.requires_grad = False
   return model
 
+class ResnetDoubleHead(nn.Module):
+  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
+    super(ResnetDoubleHead, self).__init__()
+    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+    in_features = resnet.fc.in_features # 2048 for resnet101
+    self.resnet_head = resnet.fc
+    resnet.fc = Identity()
+    self.resnet = resnet
+    
+    self.img_emb_size = 800
+    
+    if mlp_layer_sizes is not None:
+      assert isinstance(mlp_layer_sizes, list)
+      self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
+    else:
+      self.fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers)            
+    self.obj_fc = ParametricMLP(self.img_emb_size, OBJ_CLASS, [400])
+    self.attr_fc = ParametricMLP(self.img_emb_size, ATTR_CLASS, [400])
+
+  def forward(self, sample):
+    imgs= sample[4].to(dev)
+    img_features = self.fc(imgs)
+    obj_pred = self.obj_fc(img_features)
+    attr_pred = self.attr_fc(img_features)
+    return attr_pred, obj_pred
 
 class DoubleClassifier(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
@@ -99,6 +124,43 @@ class DoubleClassifier(nn.Module):
     img_features = self.fc(imgs)
     obj_pred = self.obj_fc(img_features[:, :self.obj_classifier_input_size])
     attr_pred = self.attr_fc(img_features[:, self.obj_classifier_input_size:])
+    return attr_pred, obj_pred
+  
+class ReciprocalClassifier(nn.Module):
+  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
+    super(ReciprocalClassifier, self).__init__()
+    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+    in_features = resnet.fc.in_features # 2048 for resnet101
+    self.resnet_head = resnet.fc
+    resnet.fc = Identity()
+    self.resnet = resnet
+
+    self.img_emb_size = 800
+    self.obj_emb_size = 400
+    self.attr_emb_size = 400
+    
+    if mlp_layer_sizes is not None:
+      assert isinstance(mlp_layer_sizes, list)
+      self.img_fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes, norm_output=True)
+    else:
+      self.img_fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers, norm_output=True)            
+      
+    self.obj_projector = nn.Linear(self.img_emb_size, self.obj_emb_size)
+    self.obj_project_knowing_attr = nn.Linear(self.img_emb_size+ATTR_CLASS, self.obj_emb_size)
+    self.obj_to_logits = nn.Linear(self.obj_emb_size, OBJ_CLASS)
+    self.attr_projector = nn.Linear(self.img_emb_size, self.attr_emb_size)
+    self.attr_project_knowing_obj = nn.Linear(self.img_emb_size+OBJ_CLASS, self.attr_emb_size)
+    self.attr_to_logits = nn.Linear(self.obj_emb_size, ATTR_CLASS)
+
+  def forward(self, sample):
+    imgs= sample[4].to(dev)
+    img_features = self.img_fc(imgs)
+    obj_pre_logits = self.obj_to_logits(self.obj_projector(img_features))
+    attr_pre_logits = self.attr_to_logits(self.attr_projector(img_features))
+    obj_emb = self.obj_project_knowing_attr(torch.cat((img_features, attr_pre_logits), dim=1))
+    attr_emb = self.attr_project_knowing_obj(torch.cat((img_features, obj_pre_logits), dim=1))
+    obj_pred = self.obj_to_logits(obj_emb)
+    attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred
 
 
