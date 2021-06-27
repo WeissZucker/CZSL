@@ -6,6 +6,7 @@ from functools import partial
 from symnet.utils import dataset
 from itertools import product
 from gensim.models import KeyedVectors
+import numpy as np
 
 if torch.cuda.is_available():  
   dev = "cuda:0" 
@@ -17,18 +18,31 @@ OBJ_CLASS = len(dset.objs)
 ATTR_CLASS = len(dset.attrs)
 del dset
 
+def frozen(model):
+  for param in model.parameters():
+    param.requires_grad = False
+  return model
 
+
+def layer_norm(layer, output_size, affine=False):
+    layernorm = nn.LayerNorm(output_size, elementwise_affine=affine)
+    if isinstance(layer, nn.Sequential):
+      layer.add_module(layernorm)
+    else:
+      return nn.Sequential(layer, layernorm)
+    
+    
 class Identity(nn.Module):
   def __init__(self):
     super(Identity, self).__init__()
 
   def forward(self, x):
     return x
-
+  
   
 class HalvingMLP(nn.Module):
   '''Output size of each layer except the last one is half of the input size'''
-  def __init__(self, in_features, out_features, num_layers=None, norm_output=False):
+  def __init__(self, in_features, out_features, num_layers, norm_output=False):
     super(HalvingMLP, self).__init__()
     layers = []
     for i in range(num_layers):
@@ -47,8 +61,13 @@ class HalvingMLP(nn.Module):
   def forward(self, x):
     return self.mlp(x)
   
+def LinearShrinkMLP(in_features, out_features, num_layers, norm_output=False):
+    layer_sizes = np.linspace(in_features, out_features, num_layers+2)
+    layer_sizes = [int(s) for s in layer_sizes[1:-1]]
+    return ParametricMLP(in_features, out_features, layer_sizes, norm_output)
+  
 class ParametricMLP(nn.Module):
-  '''Output size of each layer specified by [layer_sizes]'''
+  '''Output size of each inner layer specified by [layer_sizes]'''
   def __init__(self, in_features, out_features, layer_sizes, norm_output=False):
     super(ParametricMLP, self).__init__()
     layers = []
@@ -67,11 +86,6 @@ class ParametricMLP(nn.Module):
     
   def forward(self, x):
     return self.mlp(x)
-
-def frozen(model):
-  for param in model.parameters():
-    param.requires_grad = False
-  return model
 
 class ResnetDoubleHead(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
@@ -99,6 +113,7 @@ class ResnetDoubleHead(nn.Module):
     attr_pred = self.attr_fc(img_features)
     return attr_pred, obj_pred
 
+  
 class DoubleClassifier(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
     super(DoubleClassifier, self).__init__()
@@ -115,7 +130,7 @@ class DoubleClassifier(nn.Module):
       assert isinstance(mlp_layer_sizes, list)
       self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
     else:
-      self.fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers)            
+      self.fc = HalvingMLP(in_features, self.img_emb_size, num_mlp_layers)            
     self.obj_fc = HalvingMLP(self.obj_classifier_input_size, OBJ_CLASS, 1)
     self.attr_fc = HalvingMLP(self.img_emb_size-self.obj_classifier_input_size, ATTR_CLASS, 1)
 
@@ -125,6 +140,7 @@ class DoubleClassifier(nn.Module):
     obj_pred = self.obj_fc(img_features[:, :self.obj_classifier_input_size])
     attr_pred = self.attr_fc(img_features[:, self.obj_classifier_input_size:])
     return attr_pred, obj_pred
+  
   
 class ReciprocalClassifier(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
@@ -136,32 +152,40 @@ class ReciprocalClassifier(nn.Module):
     self.resnet = resnet
 
     self.img_emb_size = 800
-    self.obj_emb_size = 400
-    self.attr_emb_size = 400
+    self.obj_emb_size = 800
+    self.attr_emb_size = 800
     
     if mlp_layer_sizes is not None:
       assert isinstance(mlp_layer_sizes, list)
       self.img_fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes, norm_output=True)
     else:
-      self.img_fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers, norm_output=True)            
+      self.img_fc = HalvingMLP(in_features, self.img_emb_size, num_mlp_layers, norm_output=True)            
       
-    self.obj_projector = nn.Linear(self.img_emb_size, self.obj_emb_size)
-    self.obj_project_knowing_attr = nn.Linear(self.img_emb_size+ATTR_CLASS, self.obj_emb_size)
-    self.obj_to_logits = nn.Linear(self.obj_emb_size, OBJ_CLASS)
-    self.attr_projector = nn.Linear(self.img_emb_size, self.attr_emb_size)
-    self.attr_project_knowing_obj = nn.Linear(self.img_emb_size+OBJ_CLASS, self.attr_emb_size)
-    self.attr_to_logits = nn.Linear(self.obj_emb_size, ATTR_CLASS)
+    self.obj_projector = layer_norm(nn.Linear(self.img_emb_size, self.obj_emb_size), self.obj_emb_size)
+#     self.obj_project_knowing_attr = layer_norm(nn.Linear(self.img_emb_size+ATTR_CLASS, self.obj_emb_size), self.obj_emb_size)
+    self.obj_project_knowing_attr = ParametricMLP(self.img_emb_size+ATTR_CLASS, self.obj_emb_size, [1000, 1000], norm_output=True)
+    
+    self.attr_projector = layer_norm(nn.Linear(self.img_emb_size, self.attr_emb_size), self.attr_emb_size)
+#     self.attr_project_knowing_obj = layer_norm(nn.Linear(self.img_emb_size+OBJ_CLASS, self.attr_emb_size), self.attr_emb_size)
+    self.attr_project_knowing_obj = ParametricMLP(self.img_emb_size+OBJ_CLASS, self.attr_emb_size, [1000, 1000], norm_output=True)
+                                               
+    self.obj_to_logits = ParametricMLP(self.obj_emb_size, OBJ_CLASS, [])
+    self.attr_to_logits = ParametricMLP(self.obj_emb_size, ATTR_CLASS, [])
 
   def forward(self, sample):
     imgs= sample[4].to(dev)
     img_features = self.img_fc(imgs)
-    obj_pre_logits = self.obj_to_logits(self.obj_projector(img_features))
-    attr_pre_logits = self.attr_to_logits(self.attr_projector(img_features))
-    obj_emb = self.obj_project_knowing_attr(torch.cat((img_features, attr_pre_logits), dim=1))
-    attr_emb = self.attr_project_knowing_obj(torch.cat((img_features, obj_pre_logits), dim=1))
+    obj_pre_emb = self.obj_project_knowing_attr(torch.cat((img_features, torch.zeros((len(img_features), ATTR_CLASS)).to(dev)), dim=1))
+    attr_pre_emb = self.attr_project_knowing_obj(torch.cat((img_features, torch.zeros((len(img_features), OBJ_CLASS)).to(dev)), dim=1))
+#     obj_pre_pred = F.normalize(self.obj_to_logits(self.obj_projector(img_features)), dim=1)
+#     attr_pre_pred = F.normalize(self.attr_to_logits(self.attr_projector(img_features)), dim=1)
+    obj_pre_pred = F.normalize(self.obj_to_logits(obj_pre_emb), dim=1)
+    attr_pre_pred = F.normalize(self.attr_to_logits(attr_pre_emb), dim=1)
+    obj_emb = self.obj_project_knowing_attr(torch.cat((img_features, attr_pre_pred), dim=1))
+    attr_emb = self.attr_project_knowing_obj(torch.cat((img_features, obj_pre_pred), dim=1))
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
-    return attr_pred, obj_pred
+    return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
 
 
 class Contrastive(nn.Module):

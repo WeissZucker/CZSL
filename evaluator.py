@@ -210,7 +210,7 @@ class Evaluator(_BaseEvaluator):
       return self.eval_compo_scores(compo_scores, topk=topk)
     else:
       if isinstance(output, list):
-        attr_scores, obj_scores = zip(*output)
+        attr_scores, obj_scores = list(zip(*output))[:2]
         attr_scores = torch.cat(attr_scores)
         obj_scores = torch.cat(obj_scores)
       else:

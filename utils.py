@@ -29,6 +29,19 @@ def primitive_cross_entropy_loss(model_output, sample):
   total_loss = attr_loss + obj_loss
   return total_loss, loss_dict
 
+def reciprocal_cross_entropy_loss(model_output, sample):
+  attr_scores, obj_scores, attr_pre_scores, obj_pre_scores = model_output
+  attr_labels = sample[1].to(dev)
+  obj_labels = sample[2].to(dev)
+  attr_loss = cross_entropy_loss(attr_scores, attr_labels)
+  attr_pre_loss = cross_entropy_loss(attr_pre_scores, attr_labels)
+  obj_loss = cross_entropy_loss(obj_scores, obj_labels)
+  obj_pre_loss = cross_entropy_loss(obj_pre_scores, obj_labels)
+  loss_dict = {'attr_loss': attr_loss, 'obj_loss': obj_loss, 'attr_pre_loss': attr_pre_loss, 'obj_pre_loss': obj_pre_loss}
+  pre_loss_scale = 1
+  total_loss = attr_loss + obj_loss + pre_loss_scale * (attr_pre_loss + obj_pre_loss)
+  return total_loss, loss_dict
+
 def contrastive_cross_entropy_loss(model_output, sample):
   compo_score = model_output # [batch_size, npairs]
   pair_labels = sample[3].to(dev)
