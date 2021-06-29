@@ -66,33 +66,32 @@ class _BaseEvaluator():
     self.preset_bias = True
     self.biaslist = biaslist
 
-  def get_biaslist(self, compo_preds):
+  def get_biaslist(self, compo_scores):
     if self.no_bias:
       return [0]
     
-    nsample = len(compo_preds)
-    preds_correct_label = compo_preds[range(nsample), self.attr_labels, self.obj_labels]
-    seen_preds = (compo_preds.reshape(nsample, -1)[:,self.seen_mask.reshape(-1)]).reshape(nsample, -1)
-    max_seen_preds, _ = torch.max(seen_preds, 1)
-    score_diff = max_seen_preds - preds_correct_label - 1e-4
-    
-    _compo_preds = compo_preds.clone()
-    _compo_preds[:,~self.close_mask] = -1e10
-    _compo_preds += self.unseen_mask_cw * 1e3
-    
-    # only take samples with prediction being correct and target being unseen labels
-    correct_prediction_mask = (torch.argmax(_compo_preds.reshape(nsample, -1),-1)
+    nsample = len(compo_scores)
+    biased_cw_scores = compo_scores.clone()
+    biased_cw_scores[:,~self.close_mask] = -1e10
+    biased_cw_scores += self.unseen_mask_cw * 1e3
+    biased_correct_pred_mask = (torch.argmax(biased_cw_scores.reshape(nsample, -1),-1)
                                == self.attr_labels * self.obj_class + self.obj_labels)
-    target_label_unseen_mask = self.unseen_mask_cw[self.attr_labels, self.obj_labels]
-    score_diff, _ = torch.sort(score_diff[correct_prediction_mask * target_label_unseen_mask])
+
+    compo_scores = compo_scores[biased_correct_pred_mask]
+    attr_labels, obj_labels = self.attr_labels[biased_correct_pred_mask], self.obj_labels[biased_correct_pred_mask]
+    nsample = len(compo_scores)
+    
+    scores_correct_pred = compo_scores[range(nsample), attr_labels, obj_labels]
+    seen_scores = compo_scores.reshape(nsample, -1)[:,self.seen_mask.reshape(-1)]
+    max_seen_scores, _ = torch.max(seen_scores, 1)
+    score_diff, _ = torch.sort(max_seen_scores - scores_correct_pred - 1e-4)
+
 
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
 
-    if len(biaslist) == 0:
-      biaslist = [0]
-    return list(biaslist)
-
+    return sorted(biaslist.cpu().tolist()+[0])
+  
   def compo_acc(self, compo_scores, topk=1, open_world=False):
     """Calculate match count lists for each bias term for seen and unseen.
     Return: [2 x biaslist_size] with first row for seen and second row for unseen.
