@@ -112,38 +112,10 @@ class ResnetDoubleHead(nn.Module):
     obj_pred = self.obj_fc(img_features)
     attr_pred = self.attr_fc(img_features)
     return attr_pred, obj_pred
-
-  
-class DoubleClassifier(nn.Module):
-  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
-    super(DoubleClassifier, self).__init__()
-    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
-    in_features = resnet.fc.in_features # 2048 for resnet101
-    resnet.fc = Identity()
-    self.resnet = resnet
-    
-    self.img_emb_size = 800
-    self.obj_classifier_input_size = 400
-    assert self.img_emb_size > self.obj_classifier_input_size
-    
-    if mlp_layer_sizes is not None:
-      assert isinstance(mlp_layer_sizes, list)
-      self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
-    else:
-      self.fc = HalvingMLP(in_features, self.img_emb_size, num_mlp_layers)            
-    self.obj_fc = HalvingMLP(self.obj_classifier_input_size, OBJ_CLASS, 1)
-    self.attr_fc = HalvingMLP(self.img_emb_size-self.obj_classifier_input_size, ATTR_CLASS, 1)
-
-  def forward(self, sample):
-    imgs= sample[4].to(dev)
-    img_features = self.fc(imgs)
-    obj_pred = self.obj_fc(img_features[:, :self.obj_classifier_input_size])
-    attr_pred = self.attr_fc(img_features[:, self.obj_classifier_input_size:])
-    return attr_pred, obj_pred
   
   
 class ReciprocalClassifier(nn.Module):
-  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
+  def __init__(self, resnet_name, img_mlp_layer_sizes=None, projector_mlp_layer_sizes=None, num_mlp_layers=1):
     super(ReciprocalClassifier, self).__init__()
     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     in_features = resnet.fc.in_features # 2048 for resnet101
@@ -151,26 +123,26 @@ class ReciprocalClassifier(nn.Module):
     resnet.fc = Identity()
     self.resnet = resnet
 
-    self.img_emb_size = 800
+    self.img_emb_size = 1200
     self.obj_emb_size = 800
     self.attr_emb_size = 800
     
-    if mlp_layer_sizes is not None:
-      assert isinstance(mlp_layer_sizes, list)
-      self.img_fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes, norm_output=True)
+    if img_mlp_layer_sizes is not None:
+      assert isinstance(img_mlp_layer_sizes, list)
+      self.img_fc = ParametricMLP(in_features, self.img_emb_size, img_mlp_layer_sizes, norm_output=True)
     else:
       self.img_fc = HalvingMLP(in_features, self.img_emb_size, num_mlp_layers, norm_output=True)            
       
     self.obj_projector = layer_norm(nn.Linear(self.img_emb_size, self.obj_emb_size), self.obj_emb_size)
 #     self.obj_project_knowing_attr = layer_norm(nn.Linear(self.img_emb_size+ATTR_CLASS, self.obj_emb_size), self.obj_emb_size)
-    self.obj_project_knowing_attr = ParametricMLP(self.img_emb_size+ATTR_CLASS, self.obj_emb_size, [1000, 1000], norm_output=True)
+    self.obj_project_knowing_attr = ParametricMLP(self.img_emb_size+ATTR_CLASS, self.obj_emb_size, projector_mlp_layer_sizes, norm_output=True)
     
     self.attr_projector = layer_norm(nn.Linear(self.img_emb_size, self.attr_emb_size), self.attr_emb_size)
 #     self.attr_project_knowing_obj = layer_norm(nn.Linear(self.img_emb_size+OBJ_CLASS, self.attr_emb_size), self.attr_emb_size)
-    self.attr_project_knowing_obj = ParametricMLP(self.img_emb_size+OBJ_CLASS, self.attr_emb_size, [1000, 1000], norm_output=True)
+    self.attr_project_knowing_obj = ParametricMLP(self.img_emb_size+OBJ_CLASS, self.attr_emb_size, projector_mlp_layer_sizes, norm_output=True)
                                                
     self.obj_to_logits = ParametricMLP(self.obj_emb_size, OBJ_CLASS, [])
-    self.attr_to_logits = ParametricMLP(self.obj_emb_size, ATTR_CLASS, [])
+    self.attr_to_logits = ParametricMLP(self.attr_emb_size, ATTR_CLASS, [])
 
   def forward(self, sample):
     imgs= sample[4].to(dev)
