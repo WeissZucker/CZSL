@@ -172,7 +172,7 @@ def log_summary(summary, logger, epoch):
       logger.add_scalar('Acc/'+key, value, epoch)
 
 def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          evaluator, curr_epoch=0, best_auc=0, save_path=None) -> None:
+          evaluator, curr_epoch=0, best=None, save_path=None) -> None:
   """
   Train the model.
   Parameters:
@@ -183,6 +183,8 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
   scheduler = None
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=8, T_mult=2, eta_min=0.0001, last_epoch=-1)
   iters = len(train_dataloader)
+  if not best:
+    best = defaultdict(lambda: -1)
 
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
     # ==== Training ====
@@ -223,8 +225,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
     obj_labels = torch.cat(obj_labels).to(dev)
     summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
           
-    summary = evaluator.eval_output(outputs)
-          
     # ==== Logging ====
     log_summary(summary, logger, epoch)
     
@@ -233,18 +233,22 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
       logger.add_scalar(f'{key}/test', loss, epoch)
       print(f"{key}: {loss}", end=' - ')
     print()
-
-    if summary['OpAUC'] > best_auc:
-      best_auc = summary['OpAUC']
+    
+    for key, value in summary.items():
+      print(f'{key}:{value:.4f}|', end='')
+    print()
+  
+    if summary['OpAUC'] > best['OpAUC']:
+      best['OpAUC'] = summary['OpAUC']
       if save_path:
         torch.save({
                       'model_state_dict': net.state_dict(),
                       'optimizer_state_dict': optimizer.state_dict(),
-                      'best_auc': best_auc,
+                      'best_auc': summary['OpAUC'],
                       'epoch': epoch+1,
                       'log_dir': logger.log_dir,
+                      'log_name_suffix': logger.filename_suffix,
                       }, save_path)
         
   print("Finished training.")
   logger.flush()
-  return best_auc
