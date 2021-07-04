@@ -29,9 +29,12 @@ def primitive_cross_entropy_loss(model_output, sample):
   total_loss = attr_loss + obj_loss
   return total_loss, loss_dict
 
-def reciprocal_cross_entropy_loss(pre_loss_scale=1):
+def reciprocal_cross_entropy_loss(pre_loss_scale=1, adaptive_scale=False, total_epochs=None):
   assert(0<=pre_loss_scale<=1)
+  assert(not adaptive_scale or total_epochs)
+  epoch = 0
   def loss(model_output, sample):
+    nonlocal epoch, pre_loss_scale
     attr_scores, obj_scores, attr_pre_scores, obj_pre_scores = model_output
     attr_labels = sample[1].to(dev)
     obj_labels = sample[2].to(dev)
@@ -40,7 +43,11 @@ def reciprocal_cross_entropy_loss(pre_loss_scale=1):
     obj_loss = cross_entropy_loss(obj_scores, obj_labels)
     obj_pre_loss = cross_entropy_loss(obj_pre_scores, obj_labels)
     loss_dict = {'attr_loss': attr_loss, 'obj_loss': obj_loss, 'attr_pre_loss': attr_pre_loss, 'obj_pre_loss': obj_pre_loss}
+    if adaptive_scale:
+      # reduce pre_loss_scale linearly to 0 in the middle of training
+      pre_loss_scale = max(0, 1-epoch/(total_epochs/2))
     total_loss = (1-pre_loss_scale) * (attr_loss + obj_loss) + pre_loss_scale * (attr_pre_loss + obj_pre_loss)
+    epoch += 1
     return total_loss, loss_dict
   return loss
 
