@@ -24,6 +24,11 @@ class _BaseEvaluator():
     
     self.no_bias = False
     self.preset_bias = False
+    
+  def pairId2primitiveId(self, pairId):
+    obj_id = pairId % self.obj_class
+    attr_id = pairId.div(self.obj_class, rounding_mode='floor')
+    return attr_id, obj_id
   
   def getLabels(self, dataloader):
     obj_labels, attr_labels = [], []
@@ -102,8 +107,7 @@ class _BaseEvaluator():
       """
       ncol = compo_scores.shape[-1]
       _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
-      topk_obj_preds = topk_preds % ncol
-      topk_attr_preds = topk_preds// ncol
+      topk_attr_preds, topk_obj_preds = self.pairId2primitiveId(topk_preds)
       compo_match = (obj_labels.unsqueeze(1) == topk_obj_preds) * (attr_labels.unsqueeze(1) == topk_attr_preds)
       compo_match = torch.any(compo_match, dim=-1)
       return compo_match
@@ -164,8 +168,7 @@ class Evaluator(_BaseEvaluator):
   def get_primitive_preds(self, compo_scores, topk):
     ncol = compo_scores.shape[-1]
     _, topk_preds = torch.topk(compo_scores.view(len(compo_scores), -1), topk, dim=-1) # [batch, k]
-    topk_attr_preds = topk_preds // ncol
-    topk_obj_preds = topk_preds % ncol
+    topk_attr_preds, topk_obj_preds = self.pairId2primitiveId(topk_preds)
     return topk_attr_preds, topk_obj_preds
 
   def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
@@ -238,8 +241,7 @@ class EvaluatorWithFscore(Evaluator):
     word2vec = KeyedVectors.load_word2vec_format(self.word2vec_path, binary=True)
     cos = torch.nn.CosineSimilarity(dim=1)
     for i in tqdm.tqdm(range(self.attr_class * self.obj_class), total=self.attr_class*self.obj_class):
-      attr_id = i // self.obj_class
-      obj_id = i % self.obj_class
+      attr_id, obj_id = self.pairId2primitiveId(i)
       if self.unseen_mask_ow[attr_id, obj_id]:
         attr, obj = self.attrs[attr_id], self.objs[obj_id]
         paired_attrs_with_obj = self.attrs[self.seen_mask[:, obj_id].cpu()]
