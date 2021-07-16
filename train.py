@@ -170,9 +170,19 @@ def log_summary(summary, logger, epoch):
       logger.add_scalar(key[2:]+'/cw', value, epoch)
     else:
       logger.add_scalar('Acc/'+key, value, epoch)
+      
+def cw_output_converter(output, dataloader):
+  dataset = dataloader.dataset
+  output = torch.cat(output)
+  batch_size = output.size(0)
+  nattr, nobj = len(dataset.attrs), len(dataset.objs)
+  new_output = torch.ones((batch_size, nattr*nobj)).to(dev) * 1e-10
+  op_idx = [dataset.op_pair2idx[pair] for pair in dataset.pairs]
+  new_output[:, op_idx] = output
+  return new_output
 
 def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          evaluator, curr_epoch=0, best=None, save_path=None) -> None:
+          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True) -> None:
   """
   Train the model.
   Parameters:
@@ -223,6 +233,9 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
           test_loss[key] += loss.item()
     attr_labels = torch.cat(attr_labels).to(dev)
     obj_labels = torch.cat(obj_labels).to(dev)
+    if not open_world:
+      outputs = cw_output_converter(outputs, val_dataloader)
+      
     summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
           
     # ==== Logging ====
