@@ -2,25 +2,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import math
 from functools import partial
 from symnet.utils import dataset
 from itertools import product
 from gensim.models import KeyedVectors
 import numpy as np
-import fasttext
+# import fasttext
 
 if torch.cuda.is_available():  
   dev = "cuda:0" 
 else:  
   dev = "cpu" 
 
-dset = dataset.get_dataloader('MIT', 'train', batchsize=64, with_image=False).dataset
+dset = dataset.get_dataloader('MITg', 'train', batchsize=64, with_image=False).dataset
 OBJ_CLASS = len(dset.objs)
 ATTR_CLASS = len(dset.attrs)
 del dset
 
-word2vec_path = './word_embedding/GoogleNews-vectors-negative300.bin'
-fasttext_path = './word_embedding/fasttext.cc.en.300.bin'
+word2vec_path = './embeddings/GoogleNews-vectors-negative300.bin'
+fasttext_path = './embeddings/fasttext.cc.en.300.bin'
 
 def frozen(model):
   for param in model.parameters():
@@ -58,8 +59,8 @@ class GBU(nn.Module):
     
   def forward(self, fa, fb):
     f = torch.cat((fa, fb), dim=1)
-    gate = F.sigmoid(self.gate_fc(f))
-    f = F.tanh(f)
+    gate = torch.sigmoid(self.gate_fc(f))
+    f = torch.tanh(f)
     return gate*f[:, :self.dim] + (1-gate)*f[:, self.dim:], gate
   
 class HalvingMLP(nn.Module):
@@ -136,6 +137,58 @@ class ResnetDoubleHead(nn.Module):
     attr_pred = self.attr_fc(img_features)
     return attr_pred, obj_pred
   
+class UnimodalContrastive(nn.Module):
+  def __init__(self, dataloader, resnet_name=None):
+    super(UnimodalContrastive, self).__init__()
+    if resnet_name:
+      self.resnet = torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True)
+      self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
+      self.resnet.fc = nn.Identity()
+    else:
+      self.resnet = None
+      sample = next(iter(dataloader))
+      self.img_feature_size = sample[4].size(-1)
+    
+    self.shared_emb_size = 600
+  
+    self.img_fc = ParametricMLP(self.img_feature_size, self.shared_emb_size, [])
+      
+    self.prototype_size = 500
+    self.obj_prototype = nn.Parameter(torch.empty(OBJ_CLASS, self.prototype_size)).to(dev)
+    nn.init.kaiming_uniform_(self.obj_prototype, a=math.sqrt(5))
+    self.attr_prototype = nn.Parameter(torch.empty(ATTR_CLASS, self.prototype_size)).to(dev)
+    nn.init.kaiming_uniform_(self.attr_prototype, a=math.sqrt(5))
+    
+    self.prototype_fc = ParametricMLP(self.prototype_size*2, self.shared_emb_size, [1200,1150, 1000])
+    
+    self.obj_fc = ParametricMLP(self.img_feature_size, self.prototype_size, [1000, 800])
+    self.attr_fc = ParametricMLP(self.img_feature_size, self.prototype_size, [800, 800])
+    
+  def get_compo_prototype(self):
+    all_pair_attrs = self.attr_prototype.repeat(1, OBJ_CLASS).view(-1, self.prototype_size)
+    all_pair_objs = self.obj_prototype.repeat(ATTR_CLASS, 1)
+    compo_prototype = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
+    return compo_prototype
+
+  def forward(self, sample):
+#     imgs= sample[4].to(dev)
+#     img_features = self.fc(imgs)
+    img_features = sample[4].to(dev)
+  
+#     visual_attr_emb = self.attr_fc(img_features)
+#     visual_obj_emb = self.obj_fc(img_features)
+    
+#     attr_scores = torch.matmul(visual_attr_emb, self.attr_prototype.T)
+#     obj_scores = torch.matmul(visual_obj_emb, self.obj_prototype.T)
+    
+    img_emb = self.img_fc(img_features)
+    
+    all_pair_features = self.prototype_fc(self.get_compo_prototype())
+    compo_scores = torch.matmul(img_emb, all_pair_features.T)
+
+    
+    return compo_scores#, attr_scores, obj_scores
+  
   
 class ReciprocalClassifier(nn.Module):
   def __init__(self, resnet_name, img_mlp_layer_sizes=None, projector_mlp_layer_sizes=None, num_mlp_layers=1):
@@ -178,12 +231,21 @@ class ReciprocalClassifier(nn.Module):
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
-  
+
+def keep_topk(scores, k=5):
+  preds = F.softmax(scores, dim=0)
+  topk_idx = preds.topk(k, dim=1)[1]
+  mask = torch.zeros_like(preds, dtype=torch.bool)
+  mask[range(len(mask)), topk_idx.T] = True
+  preds[~mask] = 0
+  preds /= preds.sum(dim=1, keepdim=True)
+  return preds
+
 class SemanticReciprocalClassifier(nn.Module):
   def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
     super(SemanticReciprocalClassifier, self).__init__()
     if resnet_name:
-      self.resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+      self.resnet = torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True)
       self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
       self.resnet.fc = nn.Identity()
     else:
@@ -203,34 +265,42 @@ class SemanticReciprocalClassifier(nn.Module):
     self.attr_to_logits = ParametricMLP(self.attr_emb_size, ATTR_CLASS, [])
     
   def init_primitive_embs(self):
-    w2v_attrs = torch.load('./word_embedding/w2v_attrs.pt')
-    w2v_objs = torch.load('./word_embedding/w2v_objs.pt')
-    ft_attrs = torch.load('./word_embedding/ft_attrs.pt')
-    ft_objs = torch.load('./word_embedding/ft_objs.pt')
+    w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
+    w2v_objs = torch.load('./embeddings/w2v_objs.pt')
+#     ft_attrs = torch.load('./embeddings/ft_attrs.pt')
+#     ft_objs = torch.load('./embeddings/ft_objs.pt')
 #     self.all_attr_embs = torch.cat((w2v_attrs, ft_attrs), dim=1).to(dev)
 #     self.all_obj_embs = torch.cat((w2v_objs, ft_objs), dim=1).to(dev)
-    self.all_attr_embs = ft_attrs.to(dev)
-    self.all_obj_embs = ft_objs.to(dev)
+    self.all_attr_embs = w2v_attrs.to(dev)
+    self.all_obj_embs = w2v_objs.to(dev)
     self.word_emb_size = self.all_attr_embs.shape[-1]
 
   def forward(self, sample):
-    img_features = sample[4].to(dev)
+    if self.resnet:
+      img_features = self.resnet(sample[0].to(dev))
+    else:
+      img_features = sample[4].to(dev)
+      
     obj_pre_emb = self.obj_project(torch.cat((img_features, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1))
     attr_pre_emb = self.attr_project(torch.cat((img_features, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1))
-    softmax_scale = 2
-    obj_pre_pred = F.softmax(softmax_scale*self.obj_to_logits(obj_pre_emb), dim=1)
-    attr_pre_pred = F.softmax(softmax_scale*self.attr_to_logits(attr_pre_emb), dim=1)
+    
+    t = 0.5
+    obj_pre_pred = F.softmax(1/t * self.obj_to_logits(obj_pre_emb), dim=1)
+    attr_pre_pred = F.softmax(1/t * self.attr_to_logits(attr_pre_emb), dim=1)
+    
     attr_semantic = torch.matmul(attr_pre_pred, self.all_attr_embs) 
     obj_semantic = torch.matmul(obj_pre_pred, self.all_obj_embs)
+    
     obj_emb = self.obj_project(torch.cat((img_features, attr_semantic), dim=1))
     attr_emb = self.attr_project(torch.cat((img_features, obj_semantic), dim=1))
+    
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
   
-class SemanticReciprocalClassifierGBU(nn.Module):
+class SemanticReciprocalClassifier2(nn.Module):
   def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
-    super(SemanticReciprocalClassifierGBU, self).__init__()
+    super(SemanticReciprocalClassifier2, self).__init__()
     if resnet_name:
       self.resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
       self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
@@ -242,44 +312,45 @@ class SemanticReciprocalClassifierGBU(nn.Module):
     
     self.init_primitive_embs()
 
-    self.primitive_emb_size = 600
+    self.obj_emb_size = 600
+    self.attr_emb_size = 600        
       
-    self.obj_projector = ParametricMLP(self.img_feature_size, self.primitive_emb_size, projector_mlp_layer_sizes, norm_output=True)
-    self.attr_projector = ParametricMLP(self.img_feature_size, self.primitive_emb_size, projector_mlp_layer_sizes, norm_output=True)
-    self.semantic_projector = ParametricMLP(self.word_emb_size, self.primitive_emb_size, [], norm_output=True)
-                                               
-    self.obj_to_logits = ParametricMLP(self.primitive_emb_size, OBJ_CLASS, [500])
-    self.attr_to_logits = ParametricMLP(self.primitive_emb_size, ATTR_CLASS, [500])
+    self.obj_project = ParametricMLP(self.img_feature_size, self.obj_emb_size, [768,1024], norm_output=True)
+    self.attr_project = ParametricMLP(self.img_feature_size, self.attr_emb_size, [768,1024], norm_output=True)
     
-    self.attr_gbu = GBU(self.primitive_emb_size)
-    self.obj_gbu = GBU(self.primitive_emb_size)
+    self.word_fc = ParametricMLP(self.word_emb_size, self.word_emb_size, [])
+                                               
+    self.obj_to_logits = ParametricMLP(self.obj_emb_size+self.word_emb_size, OBJ_CLASS, [1000])
+    self.attr_to_logits = ParametricMLP(self.attr_emb_size+self.word_emb_size, ATTR_CLASS, [1000])
     
   def init_primitive_embs(self):
-    w2v_attrs = torch.load('./word_embedding/w2v_attrs.pt')
-    w2v_objs = torch.load('./word_embedding/w2v_objs.pt')
-    ft_attrs = torch.load('./word_embedding/ft_attrs.pt')
-    ft_objs = torch.load('./word_embedding/ft_objs.pt')
-    self.all_attr_embs = torch.cat((w2v_attrs, ft_attrs), dim=1).to(dev)
-    self.all_obj_embs = torch.cat((w2v_objs, ft_objs), dim=1).to(dev)
-#     self.all_attr_embs = w2v_attrs.to(dev)
-#     self.all_obj_embs = w2v_objs.to(dev)
+    w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
+    w2v_objs = torch.load('./embeddings/w2v_objs.pt')
+#     ft_attrs = torch.load('./embeddings/ft_attrs.pt')
+#     ft_objs = torch.load('./embeddings/ft_objs.pt')
+#     self.all_attr_embs = torch.cat((w2v_attrs, ft_attrs), dim=1).to(dev)
+#     self.all_obj_embs = torch.cat((w2v_objs, ft_objs), dim=1).to(dev)
+    self.all_attr_embs = w2v_attrs.to(dev)
+    self.all_obj_embs = w2v_objs.to(dev)
     self.word_emb_size = self.all_attr_embs.shape[-1]
 
   def forward(self, sample):
     img_features = sample[4].to(dev)
-    obj_visual_emb = self.obj_projector(img_features)
-    attr_visual_emb = self.attr_projector(img_features)
     
-    softmax_scale = 2
-    obj_pre_pred = F.softmax(softmax_scale*self.obj_to_logits(obj_visual_emb), dim=1)
-    attr_pre_pred = F.softmax(softmax_scale*self.attr_to_logits(attr_visual_emb), dim=1)
+    obj_pre_visual_emb = self.obj_project(img_features)
+    attr_pre_visual_emb = self.attr_project(img_features)
+    obj_pre_emb = torch.cat((obj_pre_visual_emb, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1)
+    attr_pre_emb = torch.cat((attr_pre_visual_emb, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1)
     
-    attr_semantic = self.semantic_projector(torch.matmul(attr_pre_pred, self.all_attr_embs))
-    obj_semantic = self.semantic_projector(torch.matmul(obj_pre_pred, self.all_obj_embs))
+    t = 0.73
+    obj_pre_pred = F.softmax(1/t * self.obj_to_logits(obj_pre_emb))
+    attr_pre_pred = F.softmax(1/t * self.attr_to_logits(attr_pre_emb))
     
-
-    attr_emb, _ = self.attr_gbu(attr_visual_emb, attr_semantic)
-    obj_emb, _ = self.obj_gbu(obj_visual_emb, obj_semantic)
+    attr_semantic = self.word_fc(torch.matmul(attr_pre_pred, self.all_attr_embs))
+    obj_semantic = self.word_fc(torch.matmul(obj_pre_pred, self.all_obj_embs))
+    
+    obj_emb = torch.cat((obj_pre_visual_emb, attr_semantic), dim=1)
+    attr_emb = torch.cat((attr_pre_visual_emb, obj_semantic), dim=1)
     
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
@@ -287,7 +358,7 @@ class SemanticReciprocalClassifierGBU(nn.Module):
 
 
 class Contrastive(nn.Module):
-  def __init__(self, dataloader, mlp_layer_sizes=[], num_mlp_layers=1, resnet_name=None):
+  def __init__(self, dataloader, mlp_layer_sizes=[], num_mlp_layers=1, resnet_name=None, train_only=False):
     super(Contrastive, self).__init__()
     if resnet_name:
       self.resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
@@ -297,7 +368,7 @@ class Contrastive(nn.Module):
       self.resnet = None
       sample = next(iter(dataloader))
       self.img_emb_dim = sample[4].size(-1)
-      
+    
     word2vec = KeyedVectors.load_word2vec_format(word2vec_path, binary=True)
     vectors = torch.tensor(word2vec.vectors)
     w2v_emb = nn.Embedding.from_pretrained(vectors, freeze=True)
@@ -314,6 +385,10 @@ class Contrastive(nn.Module):
       self.img_fc = HalvingMLP(self.img_emb_dim, self.compo_dim, num_layers=num_mlp_layers)            
 
     self.pair_fc = HalvingMLP(self.word_emb_dim*2, self.compo_dim, num_layers=1)
+    
+    self.train_only = train_only
+    train_pairs = dataloader.dataset.train_pairs
+    self.train_idx = [dataloader.dataset.all_pair2idx[pair] for pair in train_pairs]
     
   def init_pair_embs(self, dataloader, w2v_emb, w2v_idx_dict):
       attr_labels = dataloader.dataset.attrs
@@ -332,7 +407,10 @@ class Contrastive(nn.Module):
     else:
       imgs = sample[4].to(dev)
     img_features = F.normalize(self.img_fc(imgs), dim=1)
-    all_pair_features = F.normalize(self.pair_fc(self.all_pairs_emb), dim=1)
+    if self.train_only and self.training:
+      all_pair_features = F.normalize(self.pair_fc(self.all_pairs_emb[self.train_idx]), dim=1)
+    else:
+      all_pair_features = F.normalize(self.pair_fc(self.all_pairs_emb), dim=1)
   
     compo_scores = 20*torch.matmul(img_features, all_pair_features.T)
     return compo_scores
@@ -349,34 +427,35 @@ class PrimitiveContrastive(nn.Module):
       sample = next(iter(dataloader))
       self.img_feature_size = sample[4].size(-1)
       
-    word2vec = KeyedVectors.load_word2vec_format(word2vec_path, binary=True)
-    vectors = torch.tensor(word2vec.vectors)
-    w2v_emb = nn.Embedding.from_pretrained(vectors, freeze=True)
-    w2v_idx_dict = word2vec.key_to_index
-    self.word_emb_size = vectors.shape[-1]
-    self.init_primitive_embs(dataloader, w2v_emb, w2v_idx_dict)
+    
+    self.init_primitive_embs()
     
     self.shared_embedding_size = 400
-    self.visual_obj_mlp = ParametricMLP(self.img_feature_size, self.shared_embedding_size, [1000, 800, 600], norm_output=True)
-    self.visual_attr_mlp = ParametricMLP(self.img_feature_size, self.shared_embedding_size, [1000, 800, 600], norm_output=True)
-    self.semantic_obj_mlp = ParametricMLP(self.word_emb_size, self.shared_embedding_size, [500, 450], norm_output=True)
-    self.semantic_attr_mlp = ParametricMLP(self.word_emb_size, self.shared_embedding_size, [500, 450], norm_output=True)
     
-  def init_primitive_embs(self, dataloader, w2v_emb, w2v_idx_dict):
-    all_attr_idx = torch.tensor([w2v_idx_dict[attr] for attr in dataloader.dataset.attrs])
-    all_obj_idx = torch.tensor([w2v_idx_dict[obj] for obj in dataloader.dataset.objs])
-    self.all_attr_embs = w2v_emb(all_attr_idx).to(dev)
-    self.all_obj_embs = w2v_emb(all_obj_idx).to(dev)
+    self.visual_obj_mlp = ParametricMLP(self.img_feature_size, self.shared_embedding_size, [500, 700], norm_output=True)
+    self.visual_attr_mlp = ParametricMLP(self.img_feature_size, self.shared_embedding_size, [500, 700], norm_output=True)
+    self.semantic_obj_mlp = ParametricMLP(self.word_emb_size, self.shared_embedding_size, [500, 700], norm_output=True)
+    self.semantic_attr_mlp = ParametricMLP(self.word_emb_size, self.shared_embedding_size, [500, 700], norm_output=True)
+    
+  def init_primitive_embs(self):
+    w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
+    w2v_objs = torch.load('./embeddings/w2v_objs.pt')
+    ft_attrs = torch.load('./embeddings/ft_attrs.pt')
+    ft_objs = torch.load('./embeddings/ft_objs.pt')
+    self.all_attr_embs = torch.cat((w2v_attrs, ft_attrs), dim=1).to(dev)
+    self.all_obj_embs = torch.cat((w2v_objs, ft_objs), dim=1).to(dev)
+#     self.all_attr_embs = w2v_attrs.to(dev)
+#     self.all_obj_embs = w2v_objs.to(dev)
+    self.word_emb_size = self.all_attr_embs.shape[-1]
 
 
   def forward(self, sample):
     img_features = sample[4].to(dev)
-#     img_features = self.fc(imgs)
-    visual_attr_emb = self.visual_attr_mlp(img_features)
-    visual_obj_emb = self.visual_obj_mlp(img_features)
-    semantic_attr_emb = self.semantic_attr_mlp(self.all_attr_embs)
-    semantic_obj_emb = self.semantic_obj_mlp(self.all_obj_embs)
-    attr_scores = torch.matmul(visual_attr_emb, semantic_attr_emb.T)
-    obj_scores = torch.matmul(visual_obj_emb, semantic_obj_emb.T)
+    visual_attr_emb = F.normalize(self.visual_attr_mlp(img_features), dim=1)
+    visual_obj_emb = F.normalize(self.visual_obj_mlp(img_features), dim=1)
+    semantic_attr_emb = F.normalize(self.semantic_attr_mlp(self.all_attr_embs), dim=1)
+    semantic_obj_emb = F.normalize(self.semantic_obj_mlp(self.all_obj_embs), dim=1)
+    attr_scores = 20*torch.matmul(visual_attr_emb, semantic_attr_emb.T)
+    obj_scores = 20*torch.matmul(visual_obj_emb, semantic_obj_emb.T)
 
     return attr_scores, obj_scores
