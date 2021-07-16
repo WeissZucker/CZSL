@@ -261,6 +261,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
                       'epoch': epoch+1,
                       'log_dir': logger.log_dir,
                       'log_name_suffix': logger.filename_suffix,
+                      'model_str': repr(net)
                       }, save_path)
         
   print("Finished training.")
