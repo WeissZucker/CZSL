@@ -11,6 +11,7 @@ else:
 
 class DummyLogger():
   log_dir = None
+  filename_suffix = None
   def add_scalar(self, a, b, c):
     pass
   
