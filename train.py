@@ -240,7 +240,12 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
           
     # ==== Logging ====
     log_summary(summary, logger, epoch)
+    print("Train: ", end='')
+    for key, loss in running_loss.items():
+      print(f"{key}: {loss/len(train_dataloader)}", end=' - ')
+    print()
     
+    print("Test: ", end='')
     for key, loss in test_loss.items():
       loss /= len(val_dataloader) 
       logger.add_scalar(f'{key}/test', loss, epoch)
