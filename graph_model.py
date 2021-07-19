@@ -12,9 +12,8 @@ from model import *
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# graph_path = './embeddings/mitstates-graph.t7'
-# graph_path = './embeddings/graph_cw.pt'
-graph_path = './embeddings/graph_op.pt'
+cw_graph_path = './embeddings/graph_cw.pt'
+op_graph_path = './embeddings/graph_op.pt'
 weighted_graph_path = './embeddings/graph_op_weighted.pt'
 
 class GraphModel(nn.Module):
@@ -30,8 +29,10 @@ class GraphModel(nn.Module):
 
         if weighted_graph and dset.open_world:
           graph = torch.load(weighted_graph_path)
+        elif dset.open_world:
+          graph = torch.load(op_graph_path)
         else:
-          graph = torch.load(graph_path)
+          graph = torch.load(cw_graph_path)
         
         self.nodes = graph["embeddings"].to(dev)
         self.node_dim = self.nodes.size(1)
@@ -57,7 +58,7 @@ class GraphModel(nn.Module):
         hidden_layers.append((gnn.GCNConv(in_features, self.shared_emb_dim), 'x, edge_index -> x'))
         self.gcn = gnn.Sequential('x, edge_index', hidden_layers)
 
-    def forward(self, x):
+    def forward_cross_entropy(self, x):
       img = x[4].to(dev)
       img_feats = (img)
 
@@ -70,16 +71,41 @@ class GraphModel(nn.Module):
 
       pair_pred = torch.matmul(img_feats, pair_embed.T)
       return pair_pred
+
+    def forward_triplet(self, x):
+      img_feats = x[4].to(dev)
+      nsample = len(img_feats)
+      pair_id = np.array(x[3])
+      
+      current_embeddings = self.gcn(self.nodes, self.edge_index)
+      if self.train_only and self.training:
+        nodes = current_embeddings[self.train_idx]
+      else:
+        nodes = current_embeddings[self.nattrs+self.nobjs:,:]
+      
+      nodes = nodes[pair_id]
+      scores = torch.matmul(nodes, img_feats.T)
+      pos_score_mask = torch.eye(len(scores), dtype=torch.bool)
+      pos_scores = scores[pos_score_mask].view(nsample, 1)
+      neg_scores = scores[~pos_score_mask].view(nsample, nsample-1)
+      
+      return pos_scores, neg_scores
+    
+    def forward(self, x):
+      if self.training:
+        return self.forward_triplet(x)
+      else:
+        return self.forward_cross_entropy(x)
     
 class GraphMLP(nn.Module):
-    def __init__(self, dset, static_emb=True, weighted_graph=False):
+    def __init__(self, dset, weighted_graph=False):
         super(GraphMLP, self).__init__()
         self.nattrs, self.nobjs = len(dset.attrs), len(dset.objs)
 
         if weighted_graph and dset.open_world:
           graph = torch.load(weighted_graph_path)
         else:
-          graph = torch.load(graph_path)
+          graph = torch.load(op_graph_path)
         
         self.nodes = graph["embeddings"][:self.nattrs+self.nobjs].to(dev)
         if not static_emb:
@@ -92,7 +118,7 @@ class GraphMLP(nn.Module):
         
         self.node_dim = 512
         
-        hidden_layer_sizes = [3000]
+        hidden_layer_sizes = [4096]
         hidden_layers = []
         in_features = self.nodes.size(1)
         for hidden_size in hidden_layer_sizes:
@@ -109,7 +135,7 @@ class GraphMLP(nn.Module):
         self.img_feat_dim = dset.feat_dim
         self.shared_emb_dim = 800
         self.img_fc = ParametricMLP(self.img_feat_dim, self.shared_emb_dim, [768, 1000], norm_output=True)
-        self.pair_fc = ParametricMLP(self.node_dim*2, self.shared_emb_dim, [1000], norm_output=True)
+        self.pair_fc = ParametricMLP(self.node_dim*2, self.shared_emb_dim, [1200], norm_output=True)
         
     def get_all_pairs(self, nodes):
       attr_nodes = nodes[:self.nattrs]
@@ -119,7 +145,7 @@ class GraphMLP(nn.Module):
       all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
       return all_pairs
 
-    def forward(self, x):
+    def forward_cross_entropy(self, x):
       img = x[4].to(dev)
       img_feats = self.img_fc(img)
       nodes = self.gcn(self.nodes, self.edge_index)
@@ -127,3 +153,30 @@ class GraphMLP(nn.Module):
       all_pairs = self.pair_fc(all_pair_nodes)
       pair_pred = torch.matmul(img_feats, all_pairs.T)
       return pair_pred
+    
+    def forward_triplet(self, x):
+      img = x[4].to(dev)
+      img_feats = self.img_fc(img)
+      nsample = len(img)
+      attr_id, obj_id = x[1], np.array(x[2])
+      
+      nodes = self.gcn(self.nodes, self.edge_index)
+      attr_node = nodes[attr_id]
+      obj_node = nodes[self.nattrs+obj_id]
+      pair_node = torch.cat((attr_node, obj_node), dim=-1) 
+      pair = self.pair_fc(pair_node) #[batch_size, shared_emb_size]
+
+      scores = torch.matmul(pair, img_feats.T)
+      pos_score_mask = torch.eye(len(scores), dtype=torch.bool)
+      pos_scores = scores[pos_score_mask].view(nsample, 1)
+      neg_scores = scores[~pos_score_mask].view(nsample, nsample-1)
+      
+      return pos_scores, neg_scores
+ 
+    
+    def forward(self, x):
+      if self.training:
+        return self.forward_triplet(x)
+      else:
+        return self.forward_cross_entropy(x)
+      
