@@ -60,6 +60,17 @@ def contrastive_cross_entropy_loss(model_output, sample):
   loss_dict = {'contra_loss': loss}
   return loss, loss_dict
 
+
+def contrastive_triplet_loss(model_output, sample):
+  if not isinstance(model_output, tuple): # during evaluation
+    return contrastive_cross_entropy_loss(model_output, sample)
+  pos_score, neg_scores = model_output
+  loss = torch.log(1+torch.exp(neg_scores - pos_score))
+  loss = torch.mean(loss)
+  loss_dict = {'triplet_loss': loss}
+  return loss, loss_dict
+
+
 def contrastive_hinge_loss(model_output, sample, margin=0.1):
   compo_score = model_output # [batch_size, npairs]
   pair_labels = sample[3].to(dev)
