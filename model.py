@@ -50,18 +50,6 @@ def get_fasttext_embs(tokens, ft):
   embs = torch.cat(embs)
   return embs
 
-class GBU(nn.Module):
-  '''Gated Bimodal Unit for '''
-  def __init__(self, dim):
-    super(GBU, self).__init__()
-    self.dim = dim
-    self.gate_fc = nn.Linear(dim*2, dim)
-    
-  def forward(self, fa, fb):
-    f = torch.cat((fa, fb), dim=1)
-    gate = torch.sigmoid(self.gate_fc(f))
-    f = torch.tanh(f)
-    return gate*f[:, :self.dim] + (1-gate)*f[:, self.dim:], gate
   
 class HalvingMLP(nn.Module):
   '''Output size of each layer except the last one is half of the input size'''
@@ -84,10 +72,12 @@ class HalvingMLP(nn.Module):
   def forward(self, x):
     return self.mlp(x)
   
+  
 def LinearShrinkMLP(in_features, out_features, num_layers, norm_output=False):
     layer_sizes = np.linspace(in_features, out_features, num_layers+2)
     layer_sizes = [int(s) for s in layer_sizes[1:-1]]
     return ParametricMLP(in_features, out_features, layer_sizes, norm_output)
+  
   
 class ParametricMLP(nn.Module):
   '''Output size of each inner layer specified by [layer_sizes]'''
@@ -109,6 +99,7 @@ class ParametricMLP(nn.Module):
     
   def forward(self, x):
     return self.mlp(x)
+  
 
 class ResnetDoubleHead(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
@@ -136,6 +127,7 @@ class ResnetDoubleHead(nn.Module):
     obj_pred = self.obj_fc(img_features)
     attr_pred = self.attr_fc(img_features)
     return attr_pred, obj_pred
+  
   
 class UnimodalContrastive(nn.Module):
   def __init__(self, dataloader, resnet_name=None):
@@ -186,7 +178,6 @@ class UnimodalContrastive(nn.Module):
     all_pair_features = self.prototype_fc(self.get_compo_prototype())
     compo_scores = torch.matmul(img_emb, all_pair_features.T)
 
-    
     return compo_scores#, attr_scores, obj_scores
   
   
@@ -232,14 +223,6 @@ class ReciprocalClassifier(nn.Module):
     attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
 
-def keep_topk(scores, k=5):
-  preds = F.softmax(scores, dim=0)
-  topk_idx = preds.topk(k, dim=1)[1]
-  mask = torch.zeros_like(preds, dtype=torch.bool)
-  mask[range(len(mask)), topk_idx.T] = True
-  preds[~mask] = 0
-  preds /= preds.sum(dim=1, keepdim=True)
-  return preds
 
 class SemanticReciprocalClassifier(nn.Module):
   def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
@@ -297,6 +280,7 @@ class SemanticReciprocalClassifier(nn.Module):
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
+  
   
 class SemanticReciprocalClassifier2(nn.Module):
   def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
@@ -415,6 +399,7 @@ class Contrastive(nn.Module):
     compo_scores = 20*torch.matmul(img_features, all_pair_features.T)
     return compo_scores
   
+  
 class PrimitiveContrastive(nn.Module):
   def __init__(self, dataloader, resnet_name=None):
     super(PrimitiveContrastive, self).__init__()
@@ -426,7 +411,6 @@ class PrimitiveContrastive(nn.Module):
       self.resnet = None
       sample = next(iter(dataloader))
       self.img_feature_size = sample[4].size(-1)
-      
     
     self.init_primitive_embs()
     
@@ -447,7 +431,6 @@ class PrimitiveContrastive(nn.Module):
 #     self.all_attr_embs = w2v_attrs.to(dev)
 #     self.all_obj_embs = w2v_objs.to(dev)
     self.word_emb_size = self.all_attr_embs.shape[-1]
-
 
   def forward(self, sample):
     img_features = sample[4].to(dev)
