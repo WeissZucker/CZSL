@@ -16,7 +16,6 @@ GCZSL_DS_ROOT = {
 
 def get_dataloader(dataset_name, phase, feature_file="features.t7", batchsize=1, num_workers=0, open_world=True, train_only=False, 
                    neg_sample_size=3, shuffle=None, **kwargs):
-    
     if dataset_name[-1]=='g':
         dataset_name = dataset_name[:-1]
         dataset =  GCZSL_dataset.CompositionDatasetActivations(
