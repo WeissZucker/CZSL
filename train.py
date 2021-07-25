@@ -15,7 +15,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
-from symnet.utils import dataset
+import dataset
 from evaluator import Evaluator
 
 if torch.cuda.is_available():  
@@ -185,10 +185,6 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
           evaluator, curr_epoch=0, best=None, save_path=None, open_world=True) -> None:
   """
   Train the model.
-  Parameters:
-    [obj/attr]_loss_history: nested list of length 2. history[0] the training loss history and history[1] the validation loss history.
-    curr_epoch: the epoch number the model already been trained for.
-    model_dir: directory to save model states.
   """
   scheduler = None
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=8, T_mult=2, eta_min=0.0001, last_epoch=-1)
