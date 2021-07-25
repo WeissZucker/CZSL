@@ -162,7 +162,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
             else:
                 img = image
 
-            return [img, attr_id, obj_id, self.pair2idx[(attr, obj)], feat]
+            return [img, attr_id, obj_id, self.pair2idx[(attr, obj)], feat, image]
           
         def get_batch_sample(sample_ids):
           samples = [get_sample(i) for i in sample_ids]
@@ -185,10 +185,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
         # train [img, attr_id, obj_id, pair_id, img_feature, img, attr_id, obj_id, pair_id, img_feature, aff_mask]
         # test [img, attr_id, obj_id, pair_id, img_feature, aff_mask]
-        
-        if self.obj_pred is not None:
-            data.append(self.obj_pred[index,:])
-        data.append(image_name)
+
         return data
 
     def __len__(self):
