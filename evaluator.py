@@ -101,27 +101,28 @@ class _BaseEvaluator():
       compo_match = torch.any(compo_match, dim=-1)
       return compo_match
     
-    compo_scores = compo_scores.clone()
+    compo_scores_original = compo_scores.clone()
     if self.preset_bias:
       biaslist = self.biaslist
     else:
-      biaslist = self.get_biaslist(compo_scores)
+      biaslist = self.get_biaslist(compo_scores_original)
       self.biaslist = biaslist
-    
+
     if not open_world:
-      compo_scores[:,~self.close_mask] = -1e10
+      compo_scores_original[:,~self.close_mask] = -1e10
 
     results = torch.zeros((2, len(biaslist))).to(dev)
     target_label_seen_mask = self.seen_mask[self.attr_labels, self.obj_labels]
+
     for i, bias in enumerate(biaslist):
       if open_world:
-        compo_scores += self.unseen_mask_ow * bias
+        compo_scores = compo_scores_original + self.unseen_mask_ow * bias
       else:
-        compo_scores += self.unseen_mask_cw * bias
+        compo_scores = compo_scores_original + self.unseen_mask_cw * bias
       matches = _compo_match(compo_scores, self.obj_labels, self.attr_labels, topk)
       results[0, i] = torch.sum(matches[target_label_seen_mask])
       results[1, i] = torch.sum(matches[~target_label_seen_mask])
-    acc = torch.max(results[0] + results[1]) / len(compo_scores)
+    acc = torch.max(results[0] + results[1]) / len(compo_scores_original)
    
     results[0] /= torch.sum(target_label_seen_mask)
     results[1] /= torch.sum(~target_label_seen_mask)
@@ -163,6 +164,7 @@ class Evaluator(_BaseEvaluator):
   def evaluate(self, attr_preds, obj_preds, compo_scores, topk):
     attr_acc = self.acc(attr_preds, self.attr_labels)
     obj_acc = self.acc(obj_preds, self.obj_labels)
+
     acc_cw, acc_cw_biased, cw_biaslist = self.compo_acc(compo_scores, topk)
     acc_ow, acc_ow_biased, op_biaslist = self.compo_acc(compo_scores, topk, open_world=True)
     report_cw = self.analyse_acc_report(acc_cw_biased, cw_biaslist)
