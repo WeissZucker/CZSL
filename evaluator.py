@@ -15,7 +15,6 @@ class _BaseEvaluator():
     self.test_dataloader = test_dataloader
     self.attrs, self.objs = np.array(test_dataloader.dataset.attrs), np.array(test_dataloader.dataset.objs)
     self.attr_class, self.obj_class = len(self.attrs), len(self.objs)
-    # self.attr_labels, self.obj_labels = self.getLabels(test_dataloader)
     
     self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
     self.close_mask = self.test_mask + self.seen_mask
@@ -29,16 +28,6 @@ class _BaseEvaluator():
     obj_id = pairId % self.obj_class
     attr_id = pairId.div(self.obj_class, rounding_mode='floor')
     return attr_id, obj_id
-  
-  def getLabels(self, dataloader):
-    obj_labels, attr_labels = [], []
-    for batch in dataloader:
-      img, attr_id, obj_id = batch[:3]
-      obj_labels.append(obj_id.to(dev))
-      attr_labels.append(attr_id.to(dev))
-    obj_labels = torch.cat(obj_labels)
-    attr_labels = torch.cat(attr_labels)
-    return attr_labels, obj_labels
   
   def getCompoMask(self, dataloader):
     """Mask of (attr x obj) matrix with compositions appeared in the dataset being marked as 1."""
@@ -74,7 +63,6 @@ class _BaseEvaluator():
   def get_biaslist(self, compo_scores):
     if self.no_bias:
       return [0]
-    
     nsample = len(compo_scores)
     biased_cw_scores = compo_scores.clone()
     biased_cw_scores[:,~self.close_mask] = -1e10
@@ -94,13 +82,14 @@ class _BaseEvaluator():
 
     bias_skip = max(len(score_diff) // self.num_bias, 1)
     biaslist = score_diff[::bias_skip]
-
+    
     return sorted(biaslist.cpu().tolist()+[0])
   
   def compo_acc(self, compo_scores, topk=1, open_world=False):
     """Calculate match count lists for each bias term for seen and unseen.
     Return: [2 x biaslist_size] with first row for seen and second row for unseen.
     """
+
     def _compo_match(compo_scores, obj_labels, attr_labels, topk=1):
       """compo_scores: [batch, attr_class, obj_class]
       Return the count of correct composition predictions.
