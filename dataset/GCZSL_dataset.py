@@ -161,7 +161,6 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
                 img = self.transform(img)
             else:
                 img = image
-
             return [img, attr_id, obj_id, self.pair2idx[(attr, obj)], feat, image]
           
         def get_batch_sample(sample_ids):
@@ -174,17 +173,18 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
         mask = np.array(self.obj_affordance_mask[pos[2]], dtype=np.float32)
 
-
         if self.phase=='train':
             negid = self.sample_negative(pos[1], pos[2]) # negative example
-            neg = get_batch_sample(negid)
-
+            if self.neg_sample_size > 1:
+              neg = get_batch_sample(negid)
+            else:
+              neg = get_sample(negid[0])
             data = pos + neg + [mask]
         else:
             data = pos + [mask]
 
-        # train [img, attr_id, obj_id, pair_id, img_feature, img, attr_id, obj_id, pair_id, img_feature, aff_mask]
-        # test [img, attr_id, obj_id, pair_id, img_feature, aff_mask]
+        # train [img, attr_id, obj_id, pair_id, img_feature, img_path, img, attr_id, obj_id, pair_id, img_feature, img_path, aff_mask]
+        # test [img, attr_id, obj_id, pair_id, img_feature, img_path, aff_mask]
 
         return data
 
