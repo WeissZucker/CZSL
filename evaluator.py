@@ -212,7 +212,7 @@ class Evaluator(_BaseEvaluator):
     
   
 class EvaluatorWithFscore(Evaluator):
-  def __init__(self, test_dataloader, num_bias, take_compo_scores, fscore_threshold=0, word2vec_path=None, fscore_path=None):
+  def __init__(self, test_dataloader, num_bias, take_compo_scores, fscore_threshold, word2vec_path, fscore_path=None):
     super().__init__(test_dataloader, num_bias, take_compo_scores)
     self.word2vec_path = word2vec_path
     if fscore_path:
