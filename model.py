@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 import math
 from functools import partial
-from symnet.utils import dataset
+import dataset
 from itertools import product
 from gensim.models import KeyedVectors
 import numpy as np
@@ -49,39 +49,11 @@ def get_fasttext_embs(tokens, ft):
     embs.append(torch.tensor(ft.get_word_vector(token)).unsqueeze(0))
   embs = torch.cat(embs)
   return embs
-
-  
-class HalvingMLP(nn.Module):
-  '''Output size of each layer except the last one is half of the input size'''
-  def __init__(self, in_features, out_features, num_layers, norm_output=False):
-    super(HalvingMLP, self).__init__()
-    layers = []
-    for i in range(num_layers):
-      layer = nn.Sequential(
-        nn.Linear(in_features, in_features//2),
-        nn.BatchNorm1d(in_features//2),
-        nn.ReLU(),
-        nn.Dropout())
-      layers.append(layer)
-      in_features //= 2
-    layers.append(nn.Linear(in_features, out_features))
-    if norm_output:
-      layers.append(nn.LayerNorm(out_features, elementwise_affine=False))
-    self.mlp = nn.Sequential(*layers)
-    
-  def forward(self, x):
-    return self.mlp(x)
-  
-  
-def LinearShrinkMLP(in_features, out_features, num_layers, norm_output=False):
-    layer_sizes = np.linspace(in_features, out_features, num_layers+2)
-    layer_sizes = [int(s) for s in layer_sizes[1:-1]]
-    return ParametricMLP(in_features, out_features, layer_sizes, norm_output)
   
   
 class ParametricMLP(nn.Module):
   '''Output size of each inner layer specified by [layer_sizes]'''
-  def __init__(self, in_features, out_features, layer_sizes, norm_output=False):
+  def __init__(self, in_features, out_features, layer_sizes, norm_output=False, dropout=0):
     super(ParametricMLP, self).__init__()
     layers = []
     for layer_size in layer_sizes:
@@ -89,7 +61,7 @@ class ParametricMLP(nn.Module):
         nn.Linear(in_features, layer_size),
         nn.BatchNorm1d(layer_size),
         nn.ReLU(),
-        nn.Dropout())
+        nn.Dropout(p=dropout))
       layers.append(layer)
       in_features = layer_size
     layers.append(nn.Linear(in_features, out_features))
@@ -104,7 +76,9 @@ class ParametricMLP(nn.Module):
 class ResnetDoubleHead(nn.Module):
   def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
     super(ResnetDoubleHead, self).__init__()
-    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+#     resnet = frozen(torch.hub.load('pytorch/vision:v0.10.0', resnet_name, pretrained=True))
+    import torchvision.models as models
+    resnet = frozen(models.resnet18(pretrained=True).to(dev))
     in_features = resnet.fc.in_features # 2048 for resnet101
     self.resnet_head = resnet.fc
     resnet.fc = nn.Identity()
@@ -117,8 +91,8 @@ class ResnetDoubleHead(nn.Module):
       self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
     else:
       self.fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers)            
-    self.obj_fc = ParametricMLP(in_features, OBJ_CLASS, [1000, 800, 600])
-    self.attr_fc = ParametricMLP(in_features, ATTR_CLASS, [1000, 800, 600])
+    self.obj_fc = ParametricMLP(in_features, OBJ_CLASS, [1000, 800, 600], dropout=0.5)
+    self.attr_fc = ParametricMLP(in_features, ATTR_CLASS, [1000, 800, 600], dropout=0.5)
 
   def forward(self, sample):
 #     imgs= sample[4].to(dev)
@@ -129,62 +103,12 @@ class ResnetDoubleHead(nn.Module):
     return attr_pred, obj_pred
   
   
-class UnimodalContrastive(nn.Module):
-  def __init__(self, dataloader, resnet_name=None):
-    super(UnimodalContrastive, self).__init__()
-    if resnet_name:
-      self.resnet = torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True)
-      self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
-      self.resnet.fc = nn.Identity()
-    else:
-      self.resnet = None
-      sample = next(iter(dataloader))
-      self.img_feature_size = sample[4].size(-1)
-    
-    self.shared_emb_size = 600
-  
-    self.img_fc = ParametricMLP(self.img_feature_size, self.shared_emb_size, [])
-      
-    self.prototype_size = 500
-    self.obj_prototype = nn.Parameter(torch.empty(OBJ_CLASS, self.prototype_size)).to(dev)
-    nn.init.kaiming_uniform_(self.obj_prototype, a=math.sqrt(5))
-    self.attr_prototype = nn.Parameter(torch.empty(ATTR_CLASS, self.prototype_size)).to(dev)
-    nn.init.kaiming_uniform_(self.attr_prototype, a=math.sqrt(5))
-    
-    self.prototype_fc = ParametricMLP(self.prototype_size*2, self.shared_emb_size, [1200,1150, 1000])
-    
-    self.obj_fc = ParametricMLP(self.img_feature_size, self.prototype_size, [1000, 800])
-    self.attr_fc = ParametricMLP(self.img_feature_size, self.prototype_size, [800, 800])
-    
-  def get_compo_prototype(self):
-    all_pair_attrs = self.attr_prototype.repeat(1, OBJ_CLASS).view(-1, self.prototype_size)
-    all_pair_objs = self.obj_prototype.repeat(ATTR_CLASS, 1)
-    compo_prototype = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
-    return compo_prototype
-
-  def forward(self, sample):
-#     imgs= sample[4].to(dev)
-#     img_features = self.fc(imgs)
-    img_features = sample[4].to(dev)
-  
-#     visual_attr_emb = self.attr_fc(img_features)
-#     visual_obj_emb = self.obj_fc(img_features)
-    
-#     attr_scores = torch.matmul(visual_attr_emb, self.attr_prototype.T)
-#     obj_scores = torch.matmul(visual_obj_emb, self.obj_prototype.T)
-    
-    img_emb = self.img_fc(img_features)
-    
-    all_pair_features = self.prototype_fc(self.get_compo_prototype())
-    compo_scores = torch.matmul(img_emb, all_pair_features.T)
-
-    return compo_scores#, attr_scores, obj_scores
-  
-  
 class ReciprocalClassifier(nn.Module):
   def __init__(self, resnet_name, img_mlp_layer_sizes=None, projector_mlp_layer_sizes=None, num_mlp_layers=1):
     super(ReciprocalClassifier, self).__init__()
-    resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+#     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
+    import torchvision.models as models
+    resnet = frozen(models.resnet18(pretrained=True).to(dev))
     in_features = resnet.fc.in_features # 2048 for resnet101
     self.resnet_head = resnet.fc
     resnet.fc = nn.Identity()
@@ -276,65 +200,6 @@ class SemanticReciprocalClassifier(nn.Module):
     
     obj_emb = self.obj_project(torch.cat((img_features, attr_semantic), dim=1))
     attr_emb = self.attr_project(torch.cat((img_features, obj_semantic), dim=1))
-    
-    obj_pred = self.obj_to_logits(obj_emb)
-    attr_pred = self.attr_to_logits(attr_emb)
-    return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
-  
-  
-class SemanticReciprocalClassifier2(nn.Module):
-  def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
-    super(SemanticReciprocalClassifier2, self).__init__()
-    if resnet_name:
-      self.resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
-      self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
-      self.resnet.fc = nn.Identity()
-    else:
-      self.resnet = None
-      sample = next(iter(dataloader))
-      self.img_feature_size = sample[4].size(-1)
-    
-    self.init_primitive_embs()
-
-    self.obj_emb_size = 600
-    self.attr_emb_size = 600        
-      
-    self.obj_project = ParametricMLP(self.img_feature_size, self.obj_emb_size, [768,1024], norm_output=True)
-    self.attr_project = ParametricMLP(self.img_feature_size, self.attr_emb_size, [768,1024], norm_output=True)
-    
-    self.word_fc = ParametricMLP(self.word_emb_size, self.word_emb_size, [])
-                                               
-    self.obj_to_logits = ParametricMLP(self.obj_emb_size+self.word_emb_size, OBJ_CLASS, [1000])
-    self.attr_to_logits = ParametricMLP(self.attr_emb_size+self.word_emb_size, ATTR_CLASS, [1000])
-    
-  def init_primitive_embs(self):
-    w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
-    w2v_objs = torch.load('./embeddings/w2v_objs.pt')
-#     ft_attrs = torch.load('./embeddings/ft_attrs.pt')
-#     ft_objs = torch.load('./embeddings/ft_objs.pt')
-#     self.all_attr_embs = torch.cat((w2v_attrs, ft_attrs), dim=1).to(dev)
-#     self.all_obj_embs = torch.cat((w2v_objs, ft_objs), dim=1).to(dev)
-    self.all_attr_embs = w2v_attrs.to(dev)
-    self.all_obj_embs = w2v_objs.to(dev)
-    self.word_emb_size = self.all_attr_embs.shape[-1]
-
-  def forward(self, sample):
-    img_features = sample[4].to(dev)
-    
-    obj_pre_visual_emb = self.obj_project(img_features)
-    attr_pre_visual_emb = self.attr_project(img_features)
-    obj_pre_emb = torch.cat((obj_pre_visual_emb, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1)
-    attr_pre_emb = torch.cat((attr_pre_visual_emb, torch.zeros((len(img_features), self.word_emb_size)).to(dev)), dim=1)
-    
-    t = 0.73
-    obj_pre_pred = F.softmax(1/t * self.obj_to_logits(obj_pre_emb))
-    attr_pre_pred = F.softmax(1/t * self.attr_to_logits(attr_pre_emb))
-    
-    attr_semantic = self.word_fc(torch.matmul(attr_pre_pred, self.all_attr_embs))
-    obj_semantic = self.word_fc(torch.matmul(obj_pre_pred, self.all_obj_embs))
-    
-    obj_emb = torch.cat((obj_pre_visual_emb, attr_semantic), dim=1)
-    attr_emb = torch.cat((attr_pre_visual_emb, obj_semantic), dim=1)
     
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
