@@ -90,7 +90,7 @@ miner = miners.BatchHardMiner()
 criterion = GAE3MetricLearningLoss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2], miner=miner)
 # criterion = gae_stage_3_metric_learning_ed_loss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2], miner=miner)
 
-
+hparam.add_dict(criterion.hparam_dict())
 
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
