@@ -16,8 +16,47 @@ class DummyLogger():
   def add_scalar(self, a, b, c):
     pass
   
+  def add_hparams(self, a, b):
+    pass
+  
+  def add_text(self, a, b):
+    pass
+  
   def flush(self):
     pass
+  
+  def close(self):
+    pass
+  
+class HParam():
+  def __init__(self):
+    self.hparam_dict = dict() # For tensorboard logger
+    self.freeze = False
+    
+  def add(self, name, value):
+    if self.freeze and name in self.hparam_dict:
+      return
+    setattr(self, name, value)
+    if isinstance(value, list) or isinstance(value, tuple):
+      self.hparam_dict[name] = str(value)
+      
+  def add_dict(self, d):
+    for name, value in d.items():
+      self.add(name, value)
+      if isinstance(value, list) or isinstance(value, tuple):
+        d[name] = str(value)
+    if self.freeze:
+      self.hparam_dict = d | self.hparam_dict
+    else:
+      self.hparam_dict |= d
+      
+  def get(self, name):
+    if name not in self.hparam_dict:
+      raise Exception(f"HParam: {name} doesn't exist!")
+    return getattr(self, name)
+  
+  def __repr__(self):
+    return repr(self.hparam_dict)
   
 cross_entropy_loss = nn.CrossEntropyLoss()
 

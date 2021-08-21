@@ -24,6 +24,7 @@ else:
   
 torch.manual_seed(12345)
 datetime_str = datetime.datetime.today().strftime("%d_%m-%H-%M-%S")
+hparam = HParam()
 
 feat_file = 'compcos.t7'
 resnet_name = None #'resnet18'
@@ -37,9 +38,10 @@ take_compo_scores = True
 open_world = True
 lr = 5e-5
 num_epochs = 200
-batch_size = 64
+batch_size = 128
+hparam.add_dict({'lr': lr, 'batchsize': batch_size})
 
-model_name = "gae_stage3_npair_multisim"
+model_name = "gae_stage3_npair_batchhard_twoway"
 logger = SummaryWriter("runs/"+model_name+' '+datetime_str)
 
 
@@ -64,7 +66,9 @@ dset = train_dataloader.dataset
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
 # model = ReciprocalClassifierAttn(dset, [700, 800, 900], graph_path='./embeddings/graph_op.pt', resnet_name = resnet_name).to(dev)
 # model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None).to(dev)
-model = GAEStage3(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+model = GAEStage3(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAEBiD(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAEStage3ED(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 
 # criterion = contrastive_hinge_loss
 # criterion = contrastive_cross_entropy_loss
@@ -81,9 +85,12 @@ model = GAEStage3(dset, graph_path='./embeddings/graph_primitive.pt', static_inp
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 
 ml_loss = losses.NPairsLoss()
-# miner = miners.BatchHardMiner()
-miner = miners.MultiSimilarityMiner(epsilon=0.1)
-criterion = gae_stage_3_metric_learning_loss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2], miner=miner)
+miner = miners.BatchHardMiner()
+
+criterion = GAE3MetricLearningLoss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2], miner=miner)
+# criterion = gae_stage_3_metric_learning_ed_loss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2], miner=miner)
+
+
 
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -102,7 +109,7 @@ except NameError:
   logger = DummyLogger()
 
 curr_epoch = 0
-best = {'OpAUC':-1}
+best = {'OpAUC':-1, 'best_epoch':-1}
 log_dir = None
 
 try:
@@ -128,16 +135,14 @@ print(f"Logging to: {logger.log_dir}")
 
 nbias = 20
 val_evaluator = Evaluator(val_dataloader, nbias, take_compo_scores=take_compo_scores)
-# fscore_evaluator = EvaluatorWithFscore(test_dataloader, 20, fscore_threshold=0.5, word2vec_path='./GoogleNews-vectors-negative300.bin', fscore_path='fscore.pt')
-
-# example_input = next(iter(train_dataloader))[:5]
-# example_input[0] = torch.tensor([0]) # img name string that can't be traced by tensorboard
-# logger.add_graph(model, example_input)
 
 try:
-  train(model, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator,
+  train(model, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator,
         curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world)
 except KeyboardInterrupt:
   print("Training stopped.")
 finally:
+  logger.add_text(f'hparam/{model_name}', repr(hparam.hparam_dict | best))
+  logger.flush()
+  logger.close()
   print('Best auc:', best['OpAUC'])

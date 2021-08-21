@@ -181,7 +181,7 @@ def cw_output_converter(output, dataloader):
   new_output[:, op_idx] = output
   return new_output
 
-def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
+def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
           evaluator, curr_epoch=0, best=None, save_path=None, open_world=True) -> None:
   """
   Train the model.
@@ -254,6 +254,7 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
   
     if summary['OpAUC'] > best['OpAUC']:
       best['OpAUC'] = summary['OpAUC']
+      best['best_epoch'] = epoch
       if save_path:
         torch.save({
                       'model_state_dict': net.state_dict(),
@@ -266,4 +267,3 @@ def train(net, optimizer, criterion, num_epochs, batch_size, train_dataloader, v
                       }, save_path)
         
   print("Finished training.")
-  logger.flush()

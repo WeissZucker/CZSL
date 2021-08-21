@@ -13,8 +13,9 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class GraphModelBase(nn.Module):
-  def __init__(self, dset, graph_path, train_only=False, static_inp=True, resnet_name=None):
+  def __init__(self, hparam, dset, graph_path, train_only=False, static_inp=True, resnet_name=None):
     super(GraphModelBase, self).__init__()
+    self.hparam = hparam
     self.nattrs, self.nobjs = len(dset.attrs), len(dset.objs)
     self.img_feat_dim = dset.feat_dim
 
@@ -55,12 +56,14 @@ class GraphEncoder(nn.Module):
       for hidden_size in hidden_layer_sizes:
         layer = [
           (conv_layer(in_features, hidden_size), 'x, edge_index -> x'),
+          gnn.BatchNorm(hidden_size),
           nn.ReLU(),
           nn.Dropout()
         ]
         hidden_layers.extend(layer)
         in_features = hidden_size
       hidden_layers.append((conv_layer(in_features, out_features), 'x, edge_index -> x'))
+      
       self.encoder = gnn.Sequential('x, edge_index', hidden_layers)
 
     def forward(self, x, edge_index):
@@ -130,8 +133,8 @@ class GraphMLP(GraphModelBase):
     self.img_fc = ParametricMLP(self.img_feat_dim, self.shared_emb_dim, [768, 1000], norm_output=True, dropout=0.5)
     self.pair_fc = ParametricMLP(self.node_dim*2, self.shared_emb_dim, [1000], norm_output=True, dropout=0.5)
     
-#     self.attr_classifier = ParametricMLP(self.shared_emb_dim, self.nattrs, [1500], norm_output=False, dropout=0.5)
-#     self.obj_classifier = ParametricMLP(self.shared_emb_dim, self.nobjs, [1500], norm_output=False, dropout=0.5)
+    self.attr_classifier = ParametricMLP(self.shared_emb_dim, self.nattrs, [1500], norm_output=False, dropout=0.5)
+    self.obj_classifier = ParametricMLP(self.shared_emb_dim, self.nobjs, [1500], norm_output=False, dropout=0.5)
 
   def get_all_pairs(self, nodes):
     attr_nodes = nodes[:self.nattrs]
@@ -140,31 +143,6 @@ class GraphMLP(GraphModelBase):
     all_pair_objs = obj_nodes.repeat(self.nattrs, 1)
     all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
     return all_pairs
-
-  def forward_npair(self, x):
-    if self.resnet:
-      img = self.resnet(x[0].to(dev))
-    else:
-      img = x[4].to(dev)
-    attr_id, obj_id, pair_id = x[1], np.array(x[2]), np.array(x[3])
-    nsample = len(img)
-
-    img_feats = F.normalize(self.img_fc(img))
-
-    nodes = self.gcn(self.nodes, self.edge_index)
-    all_pairs = F.normalize(self.pair_fc(self.get_all_pairs(nodes)))
-    return img_feats, all_pairs
-    
-    
-    
-    '''
-    pairs = all_pairs[pair_id]
-    scores = img_feats.unsqueeze(1) - pairs.unsqueeze(0) #[batch_size, batch_size, hidden_dim]
-    s_it = scores[range(nsample), range(nsample)] # dot products of correct pairs of (img, label)
-    s_nit = scores - s_it.unsqueeze(1)
-    s_int = negative - s_it.unsqueeze(0)
-    '''
-    return s_it, s_nit, s_int
 
   def forward_cross_entropy(self, x):
     if self.resnet:
@@ -176,39 +154,30 @@ class GraphMLP(GraphModelBase):
     all_pair_nodes = self.get_all_pairs(nodes)
     all_pairs = self.pair_fc(all_pair_nodes)
     pair_pred = torch.matmul(img_feats, all_pairs.T)
-    attr_pred = self.attr_classifier(img_feats)
-    obj_pred = self.obj_classifier(img_feats)
-    if self.training:
-      return pair_pred, attr_pred, obj_pred
-    else:
-      return pair_pred
     
-  '''
-  def forward_majority_vote(self, x):
+    return pair_pred
+
+  def forward_metric_learning(self, x):
     if self.resnet:
       img = self.resnet(x[0].to(dev))
     else:
       img = x[4].to(dev)
-    attr_label, obj_label = x[1].to(dev), x[2].to(dev)
     img_feats = self.img_fc(img)
+    pair_id = x[3]
     nodes = self.gcn(self.nodes, self.edge_index)
     all_pair_nodes = self.get_all_pairs(nodes)
-    all_pairs = self.pair_fc(all_pair_nodes)
-    pair_pred = torch.matmul(img_feats, all_pairs.T)
-    k = 20
-    topk_pair = pair_pred.topk(k, dim=1).indices
-    topk_attr = topk_pair.div(self.nobj, rounding_mode='floor')
-    topk_obj = topk_pair % self.nobj
-    attr_pred = topk_attr.mode(dim=1, keepdim=True).values
-    obj_pred = topk_obj.mode(dim=1, keepdim=True).values
-
-
-  return attr_id, obj_id
-    return pair_pred
-  '''
+    all_pairs_nodes = self.pair_fc(all_pair_nodes)
+    pair_pred = torch.matmul(img_feats, all_pairs_nodes.T)
+    attr_pred = self.attr_classifier(img_feats)
+    obj_pred = self.obj_classifier(img_feats)
+    
+    if self.training:
+      return attr_pred, obj_pred, pair_pred, img_feats, all_pair_nodes[pair_id]
+    else:
+      return pair_pred
+      
   def forward(self, x):
-    return self.forward_cross_entropy(x)
-
+    return self.forward_metric_learning(x)
 
 
 class ReciprocalClassifierGraph(GraphModelBase):
@@ -255,72 +224,6 @@ class ReciprocalClassifierGraph(GraphModelBase):
     obj_pred = self.obj_to_logits(obj_emb)
     attr_pred = self.attr_to_logits(attr_emb)
     return attr_pred, obj_pred, attr_pre_pred, obj_pre_pred
-  
-class ReciprocalClassifierAttn(nn.Module):
-  def __init__(self, dataloader, projector_mlp_layer_sizes, graph_path, resnet_name=None):
-    super(ReciprocalClassifierAttn, self).__init__()
-    if resnet_name:
-      self.resnet = torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True)
-      self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
-      self.resnet.fc = nn.Identity()
-    else:
-      self.resnet = None
-      sample = next(iter(dataloader))
-      self.img_feature_size = sample[4].size(-1)
-      
-    dset = dataloader.dataset
-    self.nattrs, self.nobjs = len(dset.attrs), len(dset.objs)
-    self.img_feat_dim = dset.feat_dim
-
-    graph = torch.load(graph_path)
-    self.nodes = graph["embeddings"][:self.nattrs+self.nobjs].to(dev)
-
-    adj = graph["adj"].todense()
-    adj = adj[:self.nattrs+self.nobjs, :self.nattrs+self.nobjs]
-    adj = coo_matrix(adj)
-    row_idx, col_idx = adj.row, adj.col
-    self.edge_index = torch.tensor([row_idx, col_idx], dtype=torch.long).to(dev)
-
-    self.node_dim = 600
-
-    hidden_layer_sizes = [2048]
-    hidden_layers = []
-    in_features = self.nodes.size(1)
-    for hidden_size in hidden_layer_sizes:
-      layer = [
-        (gnn.SAGEConv(in_features, hidden_size), 'x, edge_index -> x'),
-        nn.ReLU(),
-        nn.Dropout()
-      ]
-      hidden_layers.extend(layer)
-      in_features = hidden_size
-    hidden_layers.append((gnn.SAGEConv(in_features, self.node_dim, normalize=True), 'x, edge_index -> x'))
-    self.gcn = gnn.Sequential('x, edge_index', hidden_layers)
-    
-    self.obj_emb_size = 600 
-    self.attr_emb_size = 600
-      
-    self.obj_project = ParametricMLP(self.img_feature_size, self.obj_emb_size, projector_mlp_layer_sizes, norm_output=True)
-    self.attr_project = ParametricMLP(self.img_feature_size, self.attr_emb_size, projector_mlp_layer_sizes, norm_output=True)
-
-
-  def forward(self, sample):
-    if self.resnet:
-      img_features = self.resnet(sample[0].to(dev))
-    else:
-      img_features = sample[4].to(dev)
-      
-    obj_emb = self.obj_project(img_features)
-    attr_emb = self.attr_project(img_features)
-    
-    nodes = self.gcn(self.nodes, self.edge_index)
-    all_attr_nodes = nodes[:self.nattrs]
-    all_obj_nodes = nodes[self.nattrs:]
-    
-    attr_pred = attr_emb @ all_attr_nodes.T
-    obj_pred = obj_emb @ all_obj_nodes.T
-    
-    return attr_pred, obj_pred
 
   
 class GAE(GraphModelBase):
@@ -373,32 +276,136 @@ class GAE(GraphModelBase):
 
 
 class GAEStage3(GraphModelBase):
-    def __init__(self, dset, graph_path=None, static_inp=True, resnet_name=None, pretrained_gae=None, pretrained_mlp=None, fscore_path=None):
-        super(GAEStage3, self).__init__(dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
+    def __init__(self, hparam, dset, graph_path=None, static_inp=True, resnet_name=None, pretrained_gae=None, pretrained_mlp=None):
+        super(GAEStage3, self).__init__(hparam, dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
         
         self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
         for i, (attr, obj) in enumerate(dset.train_pairs):
           self.train_pair_edges[0, i] = dset.attr2idx[attr]
           self.train_pair_edges[1, i] = dset.obj2idx[obj]
         
-        self.node_dim = 512
+        self.hparam.add('graph_encoder_layers', [2048])
+        self.encoder = GraphEncoder(gnn.SAGEConv, self.nodes.size(1), self.node_dim, self.hparam.graph_encoder_layers)
+        self.gae = gnn.GAE(self.encoder)
+          
+        self.hparam.add('shared_emb_dim', 800)
+        self.hparam.add_dict({'img_fc_layers': [800, 1000], 'img_fc_norm': True,
+                              'pair_fc_layers': [1000], 'pair_fc_norm': True})
+        self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
+                                    norm_output=self.hparam.img_fc_norm)
+        self.pair_fc = ParametricMLP(self.node_dim*2, self.hparam.shared_emb_dim, self.hparam.pair_fc_layers,
+                                     norm_output=self.hparam.pair_fc_norm)
+        
+        self.hparam.add_dict({'attr_cls_layers': [1100], 'obj_cls_layers': [1100]})
+        self.attr_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nattrs, self.hparam.attr_cls_layers)
+        self.obj_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nobjs, self.hparam.obj_cls_layers)
+      
+    def get_all_pairs(self, nodes):
+      attr_nodes = nodes[:self.nattrs]
+      obj_nodes = nodes[self.nattrs:]
+      all_pair_attrs = attr_nodes.repeat(1,self.nobjs).view(-1, self.node_dim)
+      all_pair_objs = obj_nodes.repeat(self.nattrs, 1)
+      all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
+      return all_pairs
+    
+    def forward(self, x):
+      if self.resnet:
+        img = self.resnet(x[0].to(dev))
+      else:
+        img = x[4].to(dev)
+      pair_id = x[3]
+      img_feats = self.img_fc(img)
+      nodes = self.gae.encode(self.nodes, self.train_pair_edges)
+      all_pair_nodes = self.pair_fc(self.get_all_pairs(nodes))
+      
+      attr_pred = self.attr_classifier(img_feats)
+      obj_pred = self.obj_classifier(img_feats)
+
+      pair_pred = torch.matmul(img_feats, all_pair_nodes.T)
+      
+      if self.training:
+        return attr_pred, obj_pred, pair_pred, img_feats, all_pair_nodes[pair_id], nodes, self
+      else:
+        return pair_pred
+
+      
+class GAEBiD(GraphModelBase):
+    def __init__(self, hparam, dset, graph_path=None, static_inp=True, resnet_name=None, pretrained_gae=None, pretrained_mlp=None, fscore_path=None):
+        super(GAEBiD, self).__init__(hparam, dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
+        
+        self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
+        for i, (attr, obj) in enumerate(dset.train_pairs):
+          self.train_pair_edges[0, i] = dset.attr2idx[attr]
+          self.train_pair_edges[1, i] = dset.obj2idx[obj]
+          
+        self.hparam.add('graph_encoder_layers', [2048])
+        
+        self.encoder = GraphEncoder(gnn.SAGEConv, self.nodes.size(1), self.node_dim, self.hparam.graph_encoder_layers)
+        self.gae = gnn.GAE(self.encoder)
+          
+        self.hparam.add('shared_emb_dim', 800)
+        self.hparam.add_dict({'img_fc_layers': [800, 1000], 'img_fc_norm': True,
+                              'pair_fc_layers': [1000], 'pair_fc_norm': True})
+        self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
+                                    norm_output=self.hparam.img_fc_norm)
+        self.pair_fc = ParametricMLP(self.node_dim*2, self.hparam.shared_emb_dim, self.hparam.pair_fc_layers,
+                                     norm_output=self.hparam.pair_fc_norm)
+        
+        self.hparam.add_dict({'attr_fc_layers': [1200], 'attr_fc_norm': True,
+                              'obj_fc_layers': [1200], 'obj_fc_norm': True})
+        self.attr_fc = ParametricMLP(self.img_feat_dim, self.node_dim, self.hparam.attr_fc_layers,
+                                     norm_output=self.hparam.attr_fc_norm)
+        self.obj_fc = ParametricMLP(self.img_feat_dim, self.node_dim, self.hparam.obj_fc_layers,
+                                    norm_output=self.hparam.obj_fc_norm)
+      
+    def get_all_pairs(self, nodes):
+      attr_nodes = nodes[:self.nattrs]
+      obj_nodes = nodes[self.nattrs:]
+      all_pair_attrs = attr_nodes.repeat(1,self.nobjs).view(-1, self.node_dim)
+      all_pair_objs = obj_nodes.repeat(self.nattrs, 1)
+      all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
+      return all_pairs
+    
+    def forward(self, x):
+      if self.resnet:
+        img = self.resnet(x[0].to(dev))
+      else:
+        img = x[4].to(dev)
+      pair_id = x[3]
+      img_feats = self.img_fc(img)
+      nodes = self.gae.encode(self.nodes, self.train_pair_edges)
+      all_attr_nodes = nodes[:self.nattrs]
+      all_obj_nodes = nodes[self.nattrs:]
+      all_pair_nodes = self.pair_fc(self.get_all_pairs(nodes))
+      
+      attr_feats = self.attr_fc(img)
+      obj_feats = self.obj_fc(img)
+      
+      attr_pred = attr_feats @ all_attr_nodes.T
+      obj_pred = obj_feats @ all_obj_nodes.T
+      pair_pred = img_feats @ all_pair_nodes.T
+      
+      if self.training:
+        return attr_pred, obj_pred, pair_pred, img_feats, all_pair_nodes[pair_id], nodes, self
+      else:
+        return pair_pred
+      
+      
+class GAEStage3ED(GraphModelBase):
+    def __init__(self, dset, graph_path=None, static_inp=True, resnet_name=None, pretrained_gae=None, pretrained_mlp=None, fscore_path=None):
+        super(GAEStage3ED, self).__init__(dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
+        
+        self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
+        for i, (attr, obj) in enumerate(dset.train_pairs):
+          self.train_pair_edges[0, i] = dset.attr2idx[attr]
+          self.train_pair_edges[1, i] = dset.obj2idx[obj]
         
         self.encoder = GraphEncoder(gnn.SAGEConv, self.nodes.size(1), self.node_dim, [2048])
         self.gae = gnn.GAE(self.encoder)
-        
-        if pretrained_gae:
-          pretrained = torch.load(pretrained_gae)
-          self.gae.load_state_dict(pretrained['model_state_dict'])
-          del pretrained
           
         self.shared_emb_dim = 800
         self.img_fc = ParametricMLP(self.img_feat_dim, self.shared_emb_dim, [800, 1000], norm_output=True, dropout=0.5)
         self.pair_fc = ParametricMLP(self.node_dim*2, self.shared_emb_dim, [1000], norm_output=True, dropout=0.5)
-        
-        if pretrained_mlp:
-          pretrained = torch.load(pretrained_mlp)
-          self.img_fc.load_state_dict(pretrained['model_state_dict'])
-          del pretrained
         
         self.attr_classifier = ParametricMLP(self.shared_emb_dim, self.nattrs, [1500], norm_output=False, dropout=0.5)
         self.obj_classifier = ParametricMLP(self.shared_emb_dim, self.nobjs, [1500], norm_output=False, dropout=0.5)
@@ -407,6 +414,16 @@ class GAEStage3(GraphModelBase):
           self.fscore = torch.load(fscore_path)
         else:
           self.fscore = None
+        
+        if pretrained_gae:
+          pretrained = torch.load(pretrained_gae)
+          self.gae.load_state_dict(pretrained['model_state_dict'])
+          del pretrained
+        
+        if pretrained_mlp:
+          pretrained = torch.load(pretrained_mlp)
+          self.img_fc.load_state_dict(pretrained['model_state_dict'])
+          del pretrained
       
     def get_all_pairs(self, nodes):
       attr_nodes = nodes[:self.nattrs]
@@ -425,16 +442,22 @@ class GAEStage3(GraphModelBase):
       img_feats = self.img_fc(img)
       
       nodes = self.gae.encode(self.nodes, self.train_pair_edges)
-      all_pair_nodes = self.get_all_pairs(nodes)
-      all_pairs = self.pair_fc(all_pair_nodes)
+      all_pair_nodes = self.pair_fc(self.get_all_pairs(nodes))
       
       attr_pred = self.attr_classifier(img_feats)
       obj_pred = self.obj_classifier(img_feats)
-      pair_pred = torch.matmul(img_feats, all_pairs.T)
+
+#       pair_pred = torch.matmul(img_feats, all_pair_nodes.T)
       
       if self.training:
-#         return attr_pred, obj_pred, pair_pred, nodes, self
-#         return attr_pred, obj_pred, img_feats, all_pairs[pair_id], nodes, self
-        return attr_pred, obj_pred, pair_pred, img_feats, all_pairs[pair_id], nodes, self
+        return attr_pred, obj_pred, img_feats, all_pair_nodes[pair_id], nodes, self
       else:
-        return pair_pred
+        distance = []
+        npairs = len(all_pair_nodes)
+        for img in img_feats:
+          dist = F.pairwise_distance(all_pair_nodes, img.unsqueeze(0).repeat(npairs, 1))
+          distance.append(dist)
+        distance = torch.cat(distance)
+        scores = torch.exp(-distance/10)
+        return scores
+      
