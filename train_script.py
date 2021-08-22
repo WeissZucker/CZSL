@@ -17,14 +17,15 @@ from gcn import *
 from pytorch_metric_learning import losses, miners
 
 torch.backends.cudnn.enabled = True
+torch.manual_seed(12345)
 if torch.cuda.is_available():
   dev = "cuda:0"
 else:
   dev = "cpu"
+
   
-torch.manual_seed(12345)
-datetime_str = datetime.datetime.today().strftime("%d_%m-%H-%M-%S")
-hparam = HParam()
+
+model_name = "gaeed"
 
 feat_file = 'compcos.t7'
 resnet_name = None #'resnet18'
@@ -39,17 +40,39 @@ open_world = True
 lr = 5e-5
 num_epochs = 200
 batch_size = 128
+
+hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size})
 
-model_name = "gae_stage3_npair_batchhard_twoway"
-logger = SummaryWriter("runs/"+model_name+' '+datetime_str)
-
-
+# =======   Dataset & Evaluator  =======
 train_dataloader = dataset.get_dataloader('MITg', 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
                                           train_only=train_only, shuffle=True)
 val_dataloader = dataset.get_dataloader('MITg', 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world)
 dset = train_dataloader.dataset
+nbias = 20
+val_evaluator = Evaluator(val_dataloader, nbias, take_compo_scores=take_compo_scores)
 
+# ======  Load HParam from checkpoint =======
+try:
+  model_name
+except NameError:
+  model_name = 'tmp'
+model_dir = './models/'
+model_path = os.path.join(model_dir, model_name+'.pt')
+
+if model_name == 'tmp' and os.path.isfile(model_path):
+  os.remove(model_path)
+try:
+  checkpoint = torch.load(model_path)
+except FileNotFoundError:
+  checkpoint = None
+import pdb
+# pdb.set_trace()
+if checkpoint and 'hparam_dict' in checkpoint:
+  hparam.add_dict(checkpoint['hparam_dict'])
+  hparam.freeze = True
+
+# ====     Model & Loss    ========
 # model = ResnetDoubleHead(resnet_name, [768,1024,1200]).to(dev)
 # model = Contrastive(train_dataloader, num_mlp_layers=1).to(dev)
 # model = Contrastive(train_dataloader, mlp_layer_sizes=[768,1024,1200], train_only=train_only).to(dev)
@@ -66,9 +89,11 @@ dset = train_dataloader.dataset
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
 # model = ReciprocalClassifierAttn(dset, [700, 800, 900], graph_path='./embeddings/graph_op.pt', resnet_name = resnet_name).to(dev)
 # model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None).to(dev)
-model = GAEStage3(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAEStage3(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 # model = GAEBiD(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-# model = GAEStage3ED(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+model = GAEStage3ED(hparam, dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 # criterion = contrastive_hinge_loss
 # criterion = contrastive_cross_entropy_loss
@@ -92,28 +117,12 @@ criterion = GAE3MetricLearningLoss(ml_loss, loss_weights=[0.8, 0.8, 0.4, 1, 0.2]
 
 hparam.add_dict(criterion.hparam_dict())
 
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-try:
-  model_name
-except NameError:
-  model_name = 'tmp'
-model_dir = './models/'
-model_path = os.path.join(model_dir, model_name+'.pt')
-if model_name == 'tmp' and os.path.isfile(model_path):
-  os.remove(model_path)
-  
-try:
-  logger
-except NameError:
-  logger = DummyLogger()
-
+# === Restore model and logger from Checkpoint ===
 curr_epoch = 0
 best = {'OpAUC':-1, 'best_epoch':-1}
 log_dir = None
 
-try:
-  checkpoint = torch.load(model_path)
+if checkpoint:
   model.load_state_dict(checkpoint['model_state_dict'])
   optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
   if 'best_auc' in checkpoint:
@@ -126,15 +135,16 @@ try:
     filename_suffix = checkpoint['log_name_suffix']
   del checkpoint
   print('Model loaded.')
-except FileNotFoundError:
-  pass
 
 if log_dir:
   logger = SummaryWriter(log_dir, filename_suffix=model_name+filename_suffix)
+else:
+  if model_name == 'tmp':
+    logger = DummyLogger()
+  else:
+    datetime_str = datetime.datetime.today().strftime("%d_%m-%H-%M-%S")
+    logger = SummaryWriter("runs/"+model_name+' '+datetime_str)
 print(f"Logging to: {logger.log_dir}")
-
-nbias = 20
-val_evaluator = Evaluator(val_dataloader, nbias, take_compo_scores=take_compo_scores)
 
 try:
   train(model, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator,

@@ -66,7 +66,7 @@ class ParametricMLP(nn.Module):
       in_features = layer_size
     layers.append(nn.Linear(in_features, out_features))
     if norm_output:
-      layers.append(nn.LayerNorm(out_features))
+      layers.append(nn.LayerNorm(out_features, elementwise_affine=False))
     self.mlp = nn.Sequential(*layers)
     
   def forward(self, x):
