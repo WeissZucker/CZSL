@@ -61,7 +61,7 @@ class ParametricMLP(nn.Module):
         nn.Linear(in_features, layer_size),
         nn.BatchNorm1d(layer_size),
         nn.ReLU(),
-        nn.Dropout(p=dropout))
+        nn.Dropout(dropout))
       layers.append(layer)
       in_features = layer_size
     layers.append(nn.Linear(in_features, out_features))

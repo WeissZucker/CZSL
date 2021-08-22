@@ -15,16 +15,12 @@ class DummyLogger():
   filename_suffix = None
   def add_scalar(self, a, b, c):
     pass
-  
   def add_hparams(self, a, b):
     pass
-  
   def add_text(self, a, b):
     pass
-  
   def flush(self):
     pass
-  
   def close(self):
     pass
   
