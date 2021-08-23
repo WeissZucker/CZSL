@@ -127,12 +127,18 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
             if settype == 'train':
                 if not self.ignore_mode or not self.ignored(attr_id, obj_id):
                     train_data.append(data_i)
+                elif self.ignore_mode and self.ignored(attr_id, obj_id):
+                    test_data.append(data_i)
             elif settype == 'val':
                 if not self.ignore_mode or self.ignored(attr_id, obj_id):
                   val_data.append(data_i)
+                elif self.ignore_mode and not self.ignored(attr_id, obj_id):
+                  train_data.append(data_i)
             elif settype == 'test':
                 if not self.ignore_mode or self.ignored(attr_id, obj_id):
                   test_data.append(data_i)
+                elif self.ignore_mode and not self.ignored(attr_id, obj_id):
+                  train_data.append(data_i)
             else:
                 raise NotImplementedError(settype)
 
@@ -186,7 +192,10 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         mask = np.array(self.obj_affordance_mask[pos[2]], dtype=np.float32)
 
         if self.phase=='train':
-            negid = self.sample_negative(pos[1], pos[2]) # negative example
+            if self.ignore_mode:
+              negid = [0] * self.neg_sample_size
+            else:
+              negid = self.sample_negative(pos[1], pos[2]) # negative example
             if self.neg_sample_size > 1:
               neg = get_batch_sample(negid)
             else:
