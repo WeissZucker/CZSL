@@ -13,7 +13,7 @@ from . import data_utils
 class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __init__(self, name, root, phase, feat_file, split='compositional-split', with_image=False, transform_type='normal', 
-                 open_world=True, train_only=False, neg_sample_size=3):
+                 open_world=True, train_only=False, neg_sample_size=3, ignore_attrs=None, ignore_objs=None):
         self.root = root
         self.phase = phase
         self.split = split
@@ -23,6 +23,10 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         self.feat_dim = None
         self.transform = data_utils.imagenet_transform(phase, transform_type)
         self.loader = data_utils.ImageLoader(self.root+'/images/')
+        
+        self.ignore_objs = ignore_objs
+        self.ignore_attrs = ignore_attrs
+        self.ignore_mode = ignore_objs or ignore_attrs
 
         if feat_file is not None:
             feat_file = os.path.join(root, feat_file)
@@ -98,6 +102,10 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         self.comp_gamma = {'a':1, 'b':1}
         self.attr_gamma = {'a':1, 'b':1}
         
+    def ignored(self, attr_id, obj_id):
+        return ((self.ignore_attrs is not None and attr_id in self.ignore_attrs) or
+                (self.ignore_objs is not None and obj_id in self.ignore_objs))
+        
     def get_split_info(self):
         data = torch.load(self.root+'/metadata.t7')
         train_pair_set = set(self.train_pairs)
@@ -113,15 +121,18 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
                 # ignore instances with unlabeled attributes
                 # ignore instances that are not in current split
                 continue
-                
-            data_i = [image, attr, obj, self.attr2idx[attr], self.obj2idx[obj], self.activation_dict[image]]
-
+            attr_id, obj_id = self.attr2idx[attr], self.obj2idx[obj]  
+            data_i = [image, attr, obj, attr_id, obj_id, self.activation_dict[image]]
+            
             if settype == 'train':
-                train_data.append(data_i)
+                if not self.ignore_mode or not self.ignored(attr_id, obj_id):
+                    train_data.append(data_i)
             elif settype == 'val':
-                val_data.append(data_i)
+                if not self.ignore_mode or self.ignored(attr_id, obj_id):
+                  val_data.append(data_i)
             elif settype == 'test':
-                test_data.append(data_i)
+                if not self.ignore_mode or self.ignored(attr_id, obj_id):
+                  test_data.append(data_i)
             else:
                 raise NotImplementedError(settype)
 
@@ -156,6 +167,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
     def __getitem__(self, index):
         def get_sample(i):
             image, attr, obj, attr_id, obj_id, feat = self.data[i]
+              
             if self.with_image:
                 img = self.loader(image)
                 img = self.transform(img)
