@@ -69,6 +69,9 @@ class _BaseEvaluator():
     biased_cw_scores += self.unseen_mask_cw * 1e3
     biased_correct_pred_mask = (torch.argmax(biased_cw_scores.reshape(nsample, -1),-1)
                                == self.attr_labels * self.obj_class + self.obj_labels)
+    
+    if not biased_correct_pred_mask.any():
+      return [0]
 
     compo_scores = compo_scores[biased_correct_pred_mask]
     attr_labels, obj_labels = self.attr_labels[biased_correct_pred_mask], self.obj_labels[biased_correct_pred_mask]
