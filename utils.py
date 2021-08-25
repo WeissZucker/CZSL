@@ -270,23 +270,20 @@ class EuclidNpairLoss(_Loss):
     return loss, loss_dict
 
 
-def op_graph_emb_init(nattrs, nobjs, pairs):
+def op_graph_emb_init(dataset_name):
   from scipy.sparse import coo_matrix
-  w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
-  w2v_objs = torch.load('./embeddings/w2v_objs.pt')
+  w2v_attrs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_attrs.pt'))
+  w2v_objs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_objs.pt'))
+  nattrs = len(w2v_attrs)
+  nobjs = len(w2v_objs)
   ind = []
   values = []
-  adj_dim = nattrs + nobjs + len(pairs)
+  adj_dim = nattrs + nobjs + nattrs*nobjs
   for i in range(nattrs):
     for j in range(nobjs):
-#       if (i, j) in pairs:
-#         ind.append([i, nattrs + j]) # attr -> obj
-#         ind.append([i, dset.pair2idx[(attrs[i], objs[j])]+nattrs+nobjs]) # attr -> compo
-#         ind.append([nattrs+j, dset.pair2idx[(attrs[i], objs[j])]+nattrs+nobjs]) # obj -> compo
-
       ind.append([i, nattrs + j]) # attr -> obj
-      ind.append([i, i*nattrs+j+nattrs+nobjs]) # attr -> compo
-      ind.append([nattrs+j, i*nattrs+j+nattrs+nobjs]) # obj -> compo
+      ind.append([i, i*nobjs+j+nattrs+nobjs]) # attr -> compo
+      ind.append([nattrs+j, i*nobjs+j+nattrs+nobjs]) # obj -> compo
       
   back_ward = [(j, i) for i, j in ind]
   ind += back_ward
@@ -304,9 +301,10 @@ def op_graph_emb_init(nattrs, nobjs, pairs):
     embs.append(w2v_attrs[i])
   for i in range(nobjs):
     embs.append(w2v_objs[i])
-  for i, j in pairs:
-    compo_emb = (w2v_attrs[i] + w2v_objs[j]) / 2
-    embs.append(compo_emb)
+  for i in range(nattrs):
+    for j in range(nobjs):
+      compo_emb = (w2v_attrs[i] + w2v_objs[j]) / 2
+      embs.append(compo_emb)
 
   embs = torch.vstack(embs)
   
