@@ -50,14 +50,16 @@ class HParam():
 cross_entropy_loss = nn.CrossEntropyLoss()
 
 class _Loss():
+  name = ''
+  def __init__(self):
+    self.hparam_dict = {'name': self.name}
+    
   def __call__(self, model_output, sample):
     return self.loss(model_output, sample)
   
-  def hparam_dict(self):
-    return dict()
-  
   
 class EuclideanLoss(_Loss):
+  name = 'EuclideanLoss'
   def loss(self, model_output, sample):
     x, y = model_output # [batch_size, npairs]
     loss = F.pairwise_distance(x, y).mean()
@@ -66,7 +68,8 @@ class EuclideanLoss(_Loss):
   
 euclidean_dist_loss = EuclideanLoss()
   
-class PrimitiveCE(_Loss):  
+class PrimitiveCE(_Loss):
+  name = 'PrimitiveCE'
   def loss(self, model_output, sample):
     attr_scores, obj_scores = model_output
     attr_labels = sample[1].to(dev)
@@ -80,6 +83,7 @@ class PrimitiveCE(_Loss):
 primitive_cross_entropy_loss = PrimitiveCE()
 
 class PairCE(_Loss):
+  name = 'PairCE'
   def loss(self, model_output, sample):
     compo_score = model_output # [batch_size, npairs]
     pair_labels = sample[3].to(dev)
@@ -90,12 +94,12 @@ class PairCE(_Loss):
 pair_cross_entropy_loss = PairCE()
 
 class GAELoss(_Loss):
+  name = 'GAELoss'
   def __init__(self, recon_loss_ratio):
+    super().__init__();
     self.recon_loss_ratio = recon_loss_ratio
     
   def loss(self, model_output, sample):
-    if not isinstance(model_output, tuple): # during evaluation
-      return pair_cross_entropy_loss(model_output, sample)
     pair_pred, nodes, model = model_output
     recon_loss = model.gae.recon_loss(nodes, model.train_pair_edges)
     ce_loss, ce_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
@@ -103,15 +107,16 @@ class GAELoss(_Loss):
     loss_dict = {'recon_loss':recon_loss} | ce_loss_dict
     return total_loss, loss_dict
   
-  def hparam_dict(self):
-    return {'recon_loss_ratio': self.recon_loss_ratio}
-  
   
 class MetricLearningLoss(_Loss):
+  name = 'MetricLearningLoss'
   def __init__(self, ml_loss, loss_weights=[1, 1], miner=None):
+    super().__init__()
     self.ml_loss = ml_loss
     self.miner = miner
     self.img_loss_weight, self.text_loss_weight = loss_weights
+    self.hparam_dict |= {'ml_loss_func': self.ml_loss.__class__.__name__,
+           'ml_loss_miner': self.miner.__class__.__name__ if self.miner else 'None'}
     
   def loss(self, model_output, sample):
     img_feats, pair_emb = model_output
@@ -123,23 +128,19 @@ class MetricLearningLoss(_Loss):
     total_loss = self.img_loss_weight * img_loss + self.text_loss_weight * text_loss
     loss_dict = {'img_loss': img_loss, 'text_loss': text_loss}
     return total_loss, loss_dict
-  
-  def hparam_dict(self):
-    return {'loss_ratio': [self.img_loss_weight, self.text_loss_weight],
-           'ml_loss_func': self.ml_loss.__class__.__name__,
-           'ml_loss_miner': self.miner.__class__.__name__ if self.miner else 'None'}
 
 
-class GAE3MetricLearningLoss(_Loss):
+class GAEMLLoss(_Loss):
+  name = 'GAEMLLoss'
   def __init__(self, loss_func, loss_weights, miner=None):
+    super().__init__()
     self.ml_weights = loss_weights[:2]
     self.primitive_weight, self.ce_weight, self.recon_weight = loss_weights[2:]
     self.ml_loss = MetricLearningLoss(loss_func, self.ml_weights, miner)
+    self.hparam_dict = self.ml_loss.hparam_dict | self.hparam_dict
     
-  def loss(self, model_output, sample):
-    if not isinstance(model_output, tuple):
-      return pair_cross_entropy_loss(model_output, sample)
-    attr_pred, obj_pred, pair_pred, img_feats, pair_emb, nodes, model = model_output
+  def loss(self, model_output, sample):    
+    pair_pred, attr_pred, obj_pred, img_feats, pair_emb, nodes, model = model_output  
     primitive_loss, primitive_loss_dict = primitive_cross_entropy_loss((attr_pred, obj_pred), sample)
     ce_loss, ce_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
     ml_total_loss, ml_loss_dict = self.ml_loss((img_feats, pair_emb), sample)
@@ -152,30 +153,32 @@ class GAE3MetricLearningLoss(_Loss):
     return self.ml_loss.hparam_dict() | {'loss_ratio': self.ml_weights + [self.primitive_weight, self.ce_weight, self.recon_weight]}
   
 
-class GAE3MetricLearningEDLoss(_Loss):
+class GAEEDLoss(_Loss):
+  name = 'GAEEDLoss'
   def __init__(self, loss_func, loss_weights, miner=None):
+    super().__init__()
     self.ml_weights = loss_weights[:2]
     self.primitive_weight, self.pair_weight, self.recon_weight = loss_weights[2:]
-    self.ml_loss = MetricLearningLoss(loss_func, ml_weights, miner)
+    self.ml_loss = MetricLearningLoss(loss_func, self.ml_weights, miner)
+    self.hparam_dict = self.ml_loss.hparam_dict | self.hparam_dict
     
   def loss(self, model_output, sample):
     if not isinstance(model_output, tuple):
       return pair_cross_entropy_loss(model_output, sample)
-    attr_pred, obj_pred, pair_pred, img_feats, pair_emb, nodes, model = model_output
+    attr_pred, obj_pred, img_feats, pair_emb, nodes, model = model_output
     primitive_loss, primitive_loss_dict = primitive_cross_entropy_loss((attr_pred, obj_pred), sample)
-    ed_loss, ed_loss_dict = euclidean_dist_loss((img_feat, pair_emb), sample)
+    ed_loss, ed_loss_dict = euclidean_dist_loss((img_feats, pair_emb), sample)
     ml_total_loss, ml_loss_dict = self.ml_loss((img_feats, pair_emb), sample)
     recon_loss = model.gae.recon_loss(nodes, model.train_pair_edges)
-    total_loss = self.ml_total_loss + self.primitive_weight * primitive_loss + self.pair_weight * ed_loss + self.recon_weight * recon_loss
+    total_loss = ml_total_loss + self.primitive_weight * primitive_loss + self.pair_weight * ed_loss + self.recon_weight * recon_loss
     loss_dict = {'recon_loss': recon_loss} | primitive_loss_dict | ed_loss_dict | ml_loss_dict 
     return total_loss, loss_dict
 
-  def hparam_dict(self):
-    return self.ml_loss.hparam_dict() | {'loss_ratio': self.ml_weights + [self.primitive_weight, self.pair_weight, self.recon_weight]}
-
 
 class ReciprocalLoss(_Loss):
+  name = 'ReciprocalLoss'
   def __init__(pre_loss_scale=1, adaptive_scale=False, total_epochs=None):
+    super().__init__()
     self.pre_loss_scale = pre_loss_scale
     assert(not adaptive_scale or total_epochs)
     self.epoch = 0
@@ -197,9 +200,74 @@ class ReciprocalLoss(_Loss):
     total_loss = (1-self.pre_loss_scale) * (attr_loss + obj_loss) + self.pre_loss_scale * (attr_pre_loss + obj_pre_loss)
     self.epoch += 1
     return total_loss, loss_dict
+  
+
+class NPairLoss(_Loss):
+  name = 'NPairLoss'
+  def __init__(self, margin=0.1):
+    super().__init__()
+    self.margin = margin
+    
+  def loss(self, model_output, sample):
+    if not isinstance(model_output, tuple):
+      return pair_cross_entropy_loss(model_output, sample)
+    pair_pred, embs, anchors = model_output
+    nsample = len(embs)
+    pair_id = sample[3]
+    dot = embs @ anchors.T
+    pos = dot.diag() # dist of correct pairs of (img, label)
+#     loss = torch.log(torch.exp(dot - pos.view(1, -1)).sum(dim=0)).mean()
+    loss = dot - pos.view(1, -1) + self.margin
+    loss = torch.max(loss, torch.zeros_like(loss)).sum(dim=0).mean()
+    pair_loss, pair_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
+    loss_dict = {'npair_loss': loss} | pair_loss_dict
+    total_loss = pair_loss + loss
+    return total_loss, loss_dict
+  
+npair_loss = NPairLoss()
+  
+class GAENPLoss(_Loss):
+  name = 'GAENPLoss'
+  def __init__(self, loss_weights):
+    super().__init__()
+    self.img_npair_weight, self.node_npair_weight, self.primitive_weight, self.ce_weight, self.recon_weight = loss_weights
+    
+  def loss(self, model_output, sample):    
+    pair_pred, attr_pred, obj_pred, img_feats, pair_emb, nodes, model = model_output  
+    primitive_loss, primitive_loss_dict = primitive_cross_entropy_loss((attr_pred, obj_pred), sample)
+    ce_loss, ce_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
+    img_npair_loss, img_npair_loss_dict = npair_loss((img_feats, pair_emb), sample)
+    node_npair_loss, node_npair_loss_dict = npair_loss((pair_emb, img_feats), sample)
+    recon_loss = model.gae.recon_loss(nodes, model.train_pair_edges)
+    total_loss = self.img_npair_weight * img_npair_loss + self.node_npair_weight * node_npair_loss + \
+                + self.primitive_weight * primitive_loss + self.ce_weight * ce_loss + self.recon_weight * recon_loss
+    loss_dict = {'recon_loss': recon_loss, 'img_npair_loss': img_npair_loss, 'node_npair_loss': node_npair_loss} | primitive_loss_dict | ce_loss_dict
+    return total_loss, loss_dict
 
   def hparam_dict(self):
-    return {'pre_loss_ratio': self.pre_loss_scale, 'adaptive_scale': self.adaptive_scale}
+    return self.ml_loss.hparam_dict() | {'loss_ratio': self.ml_weights + [self.primitive_weight, self.ce_weight, self.recon_weight]}
+
+
+class EuclidNpairLoss(_Loss):
+  name = 'EuclidNpairLoss'
+  def __init__(self, margin=0.1):
+    super().__init__()
+    self.margin = margin
+    
+  def loss(self, model_output, sample):
+    if not isinstance(model_output, tuple):
+      return pair_cross_entropy_loss(model_output, sample)
+    img_feats, all_pairs = model_output
+    nsample = len(img_feats)
+    pair_id = sample[3]
+    dist = torch.cdist(img_feats, all_pairs)
+    s_it = dist[range(nsample), pair_id] # dist of correct pairs of (img, label)
+    negative = dist[:, pair_id]
+    s_nit = s_it.view(1, -1) - negative
+    s_int = s_it.view(-1, 1) - negative
+    loss = torch.max(self.margin+s_int, torch.zeros_like(s_int)).sum(dim=1).mean()
+    loss_dict = {'ed_npair_loss': loss}
+    return loss, loss_dict
 
 
 def op_graph_emb_init(nattrs, nobjs, pairs):
