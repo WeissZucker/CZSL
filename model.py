@@ -15,11 +15,6 @@ if torch.cuda.is_available():
 else:  
   dev = "cpu" 
 
-dset = dataset.get_dataloader('MITg', 'train', batchsize=64, with_image=False).dataset
-OBJ_CLASS = len(dset.objs)
-ATTR_CLASS = len(dset.attrs)
-del dset
-
 word2vec_path = './embeddings/GoogleNews-vectors-negative300.bin'
 fasttext_path = './embeddings/fasttext.cc.en.300.bin'
 
@@ -74,8 +69,10 @@ class ParametricMLP(nn.Module):
   
 
 class ResnetDoubleHead(nn.Module):
-  def __init__(self, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
+  def __init__(self, dset, resnet_name, mlp_layer_sizes=None, num_mlp_layers=1):
     super(ResnetDoubleHead, self).__init__()
+    self.nattrs = len(dset.attrs)
+    self.nobjs = len(dset.nobjs)
 #     resnet = frozen(torch.hub.load('pytorch/vision:v0.10.0', resnet_name, pretrained=True))
     import torchvision.models as models
     resnet = frozen(models.resnet18(pretrained=True).to(dev))
@@ -91,8 +88,8 @@ class ResnetDoubleHead(nn.Module):
       self.fc = ParametricMLP(in_features, self.img_emb_size, mlp_layer_sizes)
     else:
       self.fc = HalvingMLP(in_features, self.img_emb_size, num_layers=num_mlp_layers)            
-    self.obj_fc = ParametricMLP(in_features, OBJ_CLASS, [1000, 800, 600], dropout=0.5)
-    self.attr_fc = ParametricMLP(in_features, ATTR_CLASS, [1000, 800, 600], dropout=0.5)
+    self.obj_fc = ParametricMLP(in_features, self.nobjs, [1000, 800, 600], dropout=0.5)
+    self.attr_fc = ParametricMLP(in_features, self.nattrs, [1000, 800, 600], dropout=0.5)
 
   def forward(self, sample):
 #     imgs= sample[4].to(dev)
@@ -104,8 +101,10 @@ class ResnetDoubleHead(nn.Module):
   
   
 class ReciprocalClassifier(nn.Module):
-  def __init__(self, resnet_name, img_mlp_layer_sizes=None, projector_mlp_layer_sizes=None, num_mlp_layers=1):
+  def __init__(self, dset, resnet_name, img_mlp_layer_sizes=None, projector_mlp_layer_sizes=None, num_mlp_layers=1):
     super(ReciprocalClassifier, self).__init__()
+    self.nattrs = len(dset.attrs)
+    self.nobjs = len(dset.nobjs)
 #     resnet = frozen(torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True))
     import torchvision.models as models
     resnet = frozen(models.resnet18(pretrained=True).to(dev))
@@ -126,19 +125,19 @@ class ReciprocalClassifier(nn.Module):
       self.img_fc = HalvingMLP(in_features, self.img_emb_size, num_mlp_layers, norm_output=True)            
       
     self.obj_projector = layer_norm(nn.Linear(self.img_emb_size, self.obj_emb_size), self.obj_emb_size)
-    self.obj_project_knowing_attr = ParametricMLP(self.img_emb_size+ATTR_CLASS, self.obj_emb_size, projector_mlp_layer_sizes, norm_output=True)
+    self.obj_project_knowing_attr = ParametricMLP(self.img_emb_size+self.nattrs, self.obj_emb_size, projector_mlp_layer_sizes, norm_output=True)
     
     self.attr_projector = layer_norm(nn.Linear(self.img_emb_size, self.attr_emb_size), self.attr_emb_size)
-    self.attr_project_knowing_obj = ParametricMLP(self.img_emb_size+OBJ_CLASS, self.attr_emb_size, projector_mlp_layer_sizes, norm_output=True)
+    self.attr_project_knowing_obj = ParametricMLP(self.img_emb_size+self.nobjs, self.attr_emb_size, projector_mlp_layer_sizes, norm_output=True)
                                                
-    self.obj_to_logits = ParametricMLP(self.obj_emb_size, OBJ_CLASS, [])
-    self.attr_to_logits = ParametricMLP(self.attr_emb_size, ATTR_CLASS, [])
+    self.obj_to_logits = ParametricMLP(self.obj_emb_size, self.nobjs, [])
+    self.attr_to_logits = ParametricMLP(self.attr_emb_size, self.nattrs, [])
 
   def forward(self, sample):
     img_features = sample[4].to(dev)
 #     img_features = self.img_fc(imgs)
-    obj_pre_emb = self.obj_project_knowing_attr(torch.cat((img_features, torch.zeros((len(img_features), ATTR_CLASS)).to(dev)), dim=1))
-    attr_pre_emb = self.attr_project_knowing_obj(torch.cat((img_features, torch.zeros((len(img_features), OBJ_CLASS)).to(dev)), dim=1))
+    obj_pre_emb = self.obj_project_knowing_attr(torch.cat((img_features, torch.zeros((len(img_features), self.nattrs)).to(dev)), dim=1))
+    attr_pre_emb = self.attr_project_knowing_obj(torch.cat((img_features, torch.zeros((len(img_features), self.nobjs)).to(dev)), dim=1))
     obj_pre_pred = F.normalize(self.obj_to_logits(obj_pre_emb), dim=1)
     attr_pre_pred = F.normalize(self.attr_to_logits(attr_pre_emb), dim=1)
     obj_emb = self.obj_project_knowing_attr(torch.cat((img_features, attr_pre_pred), dim=1))
@@ -149,16 +148,17 @@ class ReciprocalClassifier(nn.Module):
 
 
 class SemanticReciprocalClassifier(nn.Module):
-  def __init__(self, dataloader, projector_mlp_layer_sizes, resnet_name=None):
+  def __init__(self, dset, projector_mlp_layer_sizes, resnet_name=None):
     super(SemanticReciprocalClassifier, self).__init__()
+    self.nattrs = len(dset.attrs)
+    self.nobjs = len(dset.nobjs)
     if resnet_name:
       self.resnet = torch.hub.load('pytorch/vision:v0.9.0', resnet_name, pretrained=True)
       self.img_feature_size = self.resnet.fc.in_features # 2048 for resnet101
       self.resnet.fc = nn.Identity()
     else:
       self.resnet = None
-      sample = next(iter(dataloader))
-      self.img_feature_size = sample[4].size(-1)
+      self.img_feature_size = dset.feat_dim
     
     self.init_primitive_embs()
 
@@ -168,8 +168,8 @@ class SemanticReciprocalClassifier(nn.Module):
     self.obj_project = ParametricMLP(self.img_feature_size+self.word_emb_size, self.obj_emb_size, projector_mlp_layer_sizes, norm_output=True)
     self.attr_project = ParametricMLP(self.img_feature_size+self.word_emb_size, self.attr_emb_size, projector_mlp_layer_sizes, norm_output=True)
                                                
-    self.obj_to_logits = ParametricMLP(self.obj_emb_size, OBJ_CLASS, [])
-    self.attr_to_logits = ParametricMLP(self.attr_emb_size, ATTR_CLASS, [])
+    self.obj_to_logits = ParametricMLP(self.obj_emb_size, self.nobjs, [])
+    self.attr_to_logits = ParametricMLP(self.attr_emb_size, self.nattrs, [])
     
   def init_primitive_embs(self):
     w2v_attrs = torch.load('./embeddings/w2v_attrs.pt')
