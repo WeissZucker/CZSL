@@ -199,9 +199,12 @@ class Evaluator(_BaseEvaluator):
     self.no_bias = no_bias
 
     if self.take_compo_scores:
-      compo_scores = output
-      if isinstance(compo_scores, list):
-        compo_scores = torch.cat(compo_scores)
+      if isinstance(output, list):
+        if isinstance(output[0], tuple):
+          output = list(zip(*output))[0]
+        compo_scores = torch.cat(output)
+      else:
+        compo_scores = output
       compo_scores = compo_scores.reshape(-1, self.attr_class, self.obj_class)
       return self.eval_compo_scores(compo_scores.to(dev), topk=topk)
     else:

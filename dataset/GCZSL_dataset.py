@@ -29,12 +29,12 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         self.ignore_mode = ignore_objs or ignore_attrs
 
         if feat_file is not None:
-            feat_file = os.path.join(root, feat_file)
-            activation_data = torch.load(feat_file)
-            activation_data['files'] = ['_'.join(file.split()) for file in activation_data['files']]
-            self.activation_dict = dict(zip(activation_data['files'], activation_data['features']))
-            self.feat_dim = activation_data['features'].size(1)
-            print ('%d activations loaded'%(len(self.activation_dict)))
+          feat_file = os.path.join(root, feat_file)
+          activation_data = torch.load(feat_file)
+          activation_data['files'] = ['_'.join(file.split()) for file in activation_data['files']]
+          self.activation_dict = dict(zip(activation_data['files'], activation_data['features']))
+          self.feat_dim = activation_data['features'].size(1)
+          print ('%d activations loaded'%(len(self.activation_dict)))
 
         # pair = (attr, obj)
         (self.attrs, self.objs, self.pairs, 
