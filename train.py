@@ -173,6 +173,8 @@ def log_summary(summary, logger, epoch):
       
 def cw_output_converter(output, dataloader):
   dataset = dataloader.dataset
+  if isinstance(output[0], tuple):
+    output = list(zip(*output))[0]
   output = torch.cat(output)
   batch_size = output.size(0)
   nattr, nobj = len(dataset.attrs), len(dataset.objs)
@@ -180,6 +182,7 @@ def cw_output_converter(output, dataloader):
   op_idx = [dataset.op_pair2idx[pair] for pair in dataset.pairs]
   new_output[:, op_idx] = output
   return new_output
+
 
 def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
           evaluator, curr_epoch=0, best=None, save_path=None, open_world=True) -> None:
