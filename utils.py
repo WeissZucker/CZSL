@@ -270,7 +270,7 @@ class EuclidNpairLoss(_Loss):
     return loss, loss_dict
 
 
-def op_graph_emb_init(dataset_name):
+def generate_graph_op(dataset_name):
   from scipy.sparse import coo_matrix
   w2v_attrs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_attrs.pt'))
   w2v_objs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_objs.pt'))
@@ -292,9 +292,7 @@ def op_graph_emb_init(dataset_name):
 
   ind = torch.tensor(ind)    
   values = torch.tensor([1] * len(ind), dtype=torch.float)
-
-  adj = torch.sparse_coo_tensor(ind.T, values, (adj_dim, adj_dim)) # for pytorch-geometric version only this
-  adj = coo_matrix(adj.to_dense())
+  adj = coo_matrix((values, (ind[:, 0].numpy(), ind[:, 1].numpy())))
   
   embs = []
   for i in range(nattrs):
@@ -305,6 +303,37 @@ def op_graph_emb_init(dataset_name):
     for j in range(nobjs):
       compo_emb = (w2v_attrs[i] + w2v_objs[j]) / 2
       embs.append(compo_emb)
+
+  embs = torch.vstack(embs)
+  
+  return {"adj": adj, "embeddings": embs}
+
+def generate_graph_primitive(dataset_name):
+  from scipy.sparse import coo_matrix
+  w2v_attrs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_attrs.pt'))
+  w2v_objs = torch.load(os.path.join('./embeddings', dataset_name, 'w2v_objs.pt'))
+  nattrs = len(w2v_attrs)
+  nobjs = len(w2v_objs)
+  ind = []
+  values = []
+  adj_dim = nattrs + nobjs
+  for i in range(nattrs):
+    for j in range(nobjs):
+      ind.append([i, nattrs+j]) # attr -> obj
+      ind.append([nattrs+j, i]) # obj -> attr
+
+  for i in range(adj_dim):
+    ind.append((i,i))
+
+  ind = torch.tensor(ind)    
+  values = torch.tensor([1] * len(ind), dtype=torch.float)
+  adj = coo_matrix((values, (ind[:, 0].numpy(), ind[:, 1].numpy())))
+  
+  embs = []
+  for i in range(nattrs):
+    embs.append(w2v_attrs[i])
+  for i in range(nobjs):
+    embs.append(w2v_objs[i])
 
   embs = torch.vstack(embs)
   
