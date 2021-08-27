@@ -12,6 +12,7 @@ CZSL_DS_ROOT = {
 GCZSL_DS_ROOT = {
     'MIT': DATA_ROOT_DIR+'/mit-states-natural',
     'UT':  DATA_ROOT_DIR+'/ut-zap50k-natural',
+    'CGQA': DATA_ROOT_DIR+'/cgqa-natural',
 }
 
 def get_dataloader(dataset_name, phase, feature_file="features.t7", batchsize=1, num_workers=0, open_world=True, train_only=False, 

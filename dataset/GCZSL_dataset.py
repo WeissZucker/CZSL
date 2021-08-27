@@ -192,15 +192,15 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         mask = np.array(self.obj_affordance_mask[pos[2]], dtype=np.float32)
 
         if self.phase=='train':
-            if self.ignore_mode:
-              negid = [0] * self.neg_sample_size
-            else:
-              negid = self.sample_negative(pos[1], pos[2]) # negative example
-            if self.neg_sample_size > 1:
-              neg = get_batch_sample(negid)
-            else:
-              neg = get_sample(negid[0])
-            data = pos + neg + [mask]
+#             if self.ignore_mode:
+#               negid = [0] * self.neg_sample_size
+#             else:
+#               negid = self.sample_negative(pos[1], pos[2]) # negative example
+#             if self.neg_sample_size > 1:
+#               neg = get_batch_sample(negid)
+#             else:
+#               neg = get_sample(negid[0])
+            data = pos + [mask]
         else:
             data = pos + [mask]
 
