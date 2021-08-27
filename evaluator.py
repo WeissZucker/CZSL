@@ -10,7 +10,7 @@ else:
   dev = "cpu" 
 
 class _BaseEvaluator():
-  def __init__(self, test_dataloader, num_bias):
+  def __init__(self, test_dataloader, num_bias, cpu_eval=False):
     self.num_bias = num_bias
     self.test_dataloader = test_dataloader
     self.attrs, self.objs = np.array(test_dataloader.dataset.attrs), np.array(test_dataloader.dataset.objs)
@@ -23,6 +23,8 @@ class _BaseEvaluator():
     
     self.no_bias = False
     self.preset_bias = False
+    
+    self.dev = 'cpu' if cpu_eval else dev
     
   def pairId2primitiveId(self, pairId):
     obj_id = pairId % self.obj_class
@@ -41,7 +43,7 @@ class _BaseEvaluator():
 
     train_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in train_pairs])
     test_pair_idx = np.array([(attr2idx[attr], obj2idx[obj]) for attr, obj in test_pairs])
-    test_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool).to(dev)
+    test_mask = torch.zeros((attr_class, obj_class), dtype=torch.bool)
     seen_mask = torch.zeros_like(test_mask)
     test_mask[(test_pair_idx[:, 0], test_pair_idx[:, 1])] = True
     seen_mask[(train_pair_idx[:, 0], train_pair_idx[:, 1])] = True
@@ -114,7 +116,7 @@ class _BaseEvaluator():
     if not open_world:
       compo_scores_original[:,~self.close_mask] = -1e10
 
-    results = torch.zeros((2, len(biaslist))).to(dev)
+    results = torch.zeros((2, len(biaslist))).to(self.dev)
     target_label_seen_mask = self.seen_mask[self.attr_labels, self.obj_labels]
 
     for i, bias in enumerate(biaslist):
@@ -149,8 +151,8 @@ class _BaseEvaluator():
            'Bias': bias}
 
 class Evaluator(_BaseEvaluator):
-  def __init__(self, test_dataloader, num_bias, take_compo_scores=True):
-    super().__init__(test_dataloader, num_bias)
+  def __init__(self, test_dataloader, num_bias, cpu_eval=False, take_compo_scores=True):
+    super().__init__(test_dataloader, num_bias, cpu_eval)
     self.take_compo_scores = take_compo_scores
     
   def get_composcores(self, attr_scores, obj_scores):
@@ -194,8 +196,8 @@ class Evaluator(_BaseEvaluator):
     return self.evaluate(attr_preds, obj_preds, compo_scores, topk)
   
   def eval_output(self, output, attr_labels, obj_labels, topk=1, no_bias=False):
-    self.attr_labels = attr_labels.to(dev)
-    self.obj_labels = obj_labels.to(dev)
+    self.attr_labels = attr_labels.to(self.dev)
+    self.obj_labels = obj_labels.to(self.dev)
     self.no_bias = no_bias
 
     if self.take_compo_scores:
@@ -206,7 +208,7 @@ class Evaluator(_BaseEvaluator):
       else:
         compo_scores = output
       compo_scores = compo_scores.reshape(-1, self.attr_class, self.obj_class)
-      return self.eval_compo_scores(compo_scores.to(dev), topk=topk)
+      return self.eval_compo_scores(compo_scores.to(self.dev), topk=topk)
     else:
       if isinstance(output, list):
         attr_scores, obj_scores = list(zip(*output))[:2]
@@ -214,7 +216,7 @@ class Evaluator(_BaseEvaluator):
         obj_scores = torch.cat(obj_scores)
       else:
         attr_scores, obj_scores = output
-      return self.eval_primitive_scores(attr_scores.to(dev), obj_scores.to(dev), topk=topk)
+      return self.eval_primitive_scores(attr_scores.to(self.dev), obj_scores.to(self.dev), topk=topk)
     
   
 class EvaluatorWithFscore(Evaluator):

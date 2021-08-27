@@ -23,9 +23,10 @@ if torch.cuda.is_available():
 else:
   dev = "cpu"
 
+cpu_eval = True
   
 
-model_name = "cge_ut"
+# model_name = "gae_ut_cw_trainonly"
 
 feat_file = 'compcos.t7'
 resnet_name = None #'resnet18'
@@ -45,7 +46,7 @@ hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size})
 
 # =======   Dataset & Evaluator  =======
-dataset_name = 'UTg'
+dataset_name = 'CGQAg'
 data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
 
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
@@ -53,7 +54,7 @@ train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=fe
 val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world)
 dset = train_dataloader.dataset
 nbias = 20
-val_evaluator = Evaluator(val_dataloader, nbias, take_compo_scores=take_compo_scores)
+val_evaluator = Evaluator(val_dataloader, nbias, True, take_compo_scores=take_compo_scores)
 
 # ======  Load HParam from checkpoint =======
 try:
@@ -90,7 +91,7 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = GraphModel(dset, './embeddings/graph_primitive.pt', train_only=train_only, static_inp=static_inp).to(dev)
 # model = UnimodalContrastive(train_dataloader).to(dev)
 # model = GraphMLP(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name).to(dev)
-model = CGE(dset, train_only=train_only, static_inp=static_inp, graph_path='./embeddings/graph_op.pt').to(dev)
+# model = CGE(dset, train_only=train_only, static_inp=static_inp, graph_path='./embeddings/graph_op.pt').to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
 # model = ReciprocalClassifierAttn(dset, [700, 800, 900], graph_path='./embeddings/graph_op.pt', resnet_name = resnet_name).to(dev)
 # model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None).to(dev)
@@ -158,7 +159,7 @@ print(f"Logging to: {logger.log_dir}")
 
 try:
   train(model, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator,
-        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world)
+        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world, cpu_eval=cpu_eval)
 except KeyboardInterrupt:
   print("Training stopped.")
 finally:

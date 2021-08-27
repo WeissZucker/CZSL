@@ -171,21 +171,22 @@ def log_summary(summary, logger, epoch):
     else:
       logger.add_scalar('Acc/'+key, value, epoch)
       
-def cw_output_converter(output, dataloader):
+def cw_output_converter(output, dataloader, cpu_eval=False):
+  val_dev = 'cpu' if cpu_eval else dev
   dataset = dataloader.dataset
   if isinstance(output[0], tuple):
     output = list(zip(*output))[0]
-  output = torch.cat(output)
+  output = torch.cat(output).to(val_dev)
   batch_size = output.size(0)
   nattr, nobj = len(dataset.attrs), len(dataset.objs)
-  new_output = torch.ones((batch_size, nattr*nobj)).to(dev) * 1e-10
+  new_output = torch.ones((batch_size, nattr*nobj)).to(val_dev) * 1e-10
   op_idx = [dataset.op_pair2idx[pair] for pair in dataset.pairs]
   new_output[:, op_idx] = output
   return new_output
 
 
 def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True) -> None:
+          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True, cpu_eval=False) -> None:
   """
   Train the model.
   """
@@ -194,11 +195,13 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
   iters = len(train_dataloader)
   if not best:
     best = defaultdict(lambda: -1)
+  val_dev = 'cpu' if cpu_eval else dev
 
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
     # ==== Training ====
     running_loss = defaultdict(lambda : 0)
     net.train()
+
     for i, sample in tqdm_iter(epoch, curr_epoch+num_epochs, train_dataloader):
       optimizer.zero_grad()
       if len(sample[0]) == 1:
@@ -230,13 +233,14 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
         total_loss, loss_dict = criterion(output, sample)
         for key, loss in loss_dict.items():
           test_loss[key] += loss.item()
-    attr_labels = torch.cat(attr_labels).to(dev)
-    obj_labels = torch.cat(obj_labels).to(dev)
+
+    attr_labels = torch.cat(attr_labels).to(val_dev)
+    obj_labels = torch.cat(obj_labels).to(val_dev)
     if not open_world:
-      outputs = cw_output_converter(outputs, val_dataloader)
-      
+      outputs = cw_output_converter(outputs, val_dataloader, cpu_eval)
+
     summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
-          
+
     # ==== Logging ====
     log_summary(summary, logger, epoch)
     print("Train: ", end='')
