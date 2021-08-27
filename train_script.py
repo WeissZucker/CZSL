@@ -23,16 +23,15 @@ if torch.cuda.is_available():
 else:
   dev = "cpu"
 
-cpu_eval = True
-  
 
 # model_name = "gae_ut_cw_trainonly"
 
+dataset_name = 'MITg'
+cpu_eval = True
 feat_file = 'compcos.t7'
 resnet_name = None #'resnet18'
 with_image = resnet_name is not None
 
-# for graph model
 train_only = False
 static_inp = True
 
@@ -46,7 +45,6 @@ hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size})
 
 # =======   Dataset & Evaluator  =======
-dataset_name = 'CGQAg'
 data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
 
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
@@ -54,7 +52,7 @@ train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=fe
 val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world)
 dset = train_dataloader.dataset
 nbias = 20
-val_evaluator = Evaluator(val_dataloader, nbias, True, take_compo_scores=take_compo_scores)
+val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
 
 # ======  Load HParam from checkpoint =======
 try:

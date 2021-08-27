@@ -15,16 +15,15 @@ class _BaseEvaluator():
     self.test_dataloader = test_dataloader
     self.attrs, self.objs = np.array(test_dataloader.dataset.attrs), np.array(test_dataloader.dataset.objs)
     self.attr_class, self.obj_class = len(self.attrs), len(self.objs)
+    self.dev = 'cpu' if cpu_eval else dev
     
     self.test_mask, self.seen_mask = self.getCompoMask(test_dataloader) # (attr x obj) matrices
     self.close_mask = self.test_mask + self.seen_mask
-    self.unseen_mask_ow = ~self.seen_mask # mask of compositions not seen during training in the open world setting
-    self.unseen_mask_cw = self.close_mask * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
+    self.unseen_mask_ow = ~self.seen_mask.to(self.dev) # mask of compositions not seen during training in the open world setting
+    self.unseen_mask_cw = self.close_mask.to(self.dev) * self.unseen_mask_ow # mask of compositions not seen during training in the closed world setting
     
     self.no_bias = False
     self.preset_bias = False
-    
-    self.dev = 'cpu' if cpu_eval else dev
     
   def pairId2primitiveId(self, pairId):
     obj_id = pairId % self.obj_class
@@ -207,7 +206,7 @@ class Evaluator(_BaseEvaluator):
         compo_scores = torch.cat(output)
       else:
         compo_scores = output
-      compo_scores = compo_scores.reshape(-1, self.attr_class, self.obj_class)
+      compo_scores = compo_scores.to(self.dev).reshape(-1, self.attr_class, self.obj_class)
       return self.eval_compo_scores(compo_scores.to(self.dev), topk=topk)
     else:
       if isinstance(output, list):
@@ -234,7 +233,7 @@ class EvaluatorWithFscore(Evaluator):
     
   def calc_fscore(self):
     def cos_sim(x, y):
-      x, y = torch.tensor(x).to(dev), torch.tensor(y).unsqueeze(0).to(dev)
+      x, y = torch.tensor(x).to(self.dev), torch.tensor(y).unsqueeze(0).to(self.dev)
       return cos(x, y)
     fscore = torch.ones_like(self.seen_mask, dtype=torch.float)
     word2vec = KeyedVectors.load_word2vec_format(self.word2vec_path, binary=True)
