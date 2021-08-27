@@ -224,15 +224,16 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
     outputs = []
     attr_labels, obj_labels = [], []
     net.eval()
-    for i, sample in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
-      with torch.no_grad():
+    with torch.no_grad():
+      for i, sample in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
         output = net(sample)
-        outputs.append(output)
-        attr_labels.append(sample[1])
-        obj_labels.append(sample[2])
         total_loss, loss_dict = criterion(output, sample)
         for key, loss in loss_dict.items():
           test_loss[key] += loss.item()
+        output = tuple([x.to('cpu') if isinstance(x, torch.Tensor) else x for x in output]) # put output on cpu to save gpu memory
+        outputs.append(output)
+        attr_labels.append(sample[1])
+        obj_labels.append(sample[2])
 
     attr_labels = torch.cat(attr_labels).to(val_dev)
     obj_labels = torch.cat(obj_labels).to(val_dev)
