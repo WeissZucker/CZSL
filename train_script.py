@@ -24,24 +24,23 @@ else:
   dev = "cpu"
 
 
-# model_name = "gae_cgqa_cw"
+model_name = "gae_ut_op_resnet"
 
 dataset_name = 'UTg'
-cpu_eval = True
+cpu_eval = False
 feat_file = None #'compcos.t7'
 resnet_name = 'resnet18'
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
 train_only = False
-static_inp = True
 
 take_compo_scores = True
 open_world = True
 lr = 5e-5
 weight_decay = 0
 num_epochs = 200
-batch_size = 32
+batch_size = 128
 
 hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay})
@@ -87,14 +86,14 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = ReciprocalClassifier(resnet_name, img_mlp_layer_sizes=[1000], projector_mlp_layer_sizes=[1200,1150, 1000]).to(dev)
 # model = PrimitiveContrastive(train_dataloader).to(dev)
 # model = SemanticReciprocalClassifier(train_dataloader, [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-# model = GraphModel(dset, './embeddings/graph_primitive.pt', train_only=train_only, static_inp=static_inp).to(dev)
-# model = GraphMLP(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name).to(dev)
-# model = CGE(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path).to(dev)
+# model = GraphModel(dset, './embeddings/graph_primitive.pt', train_only=train_only).to(dev)
+# model = GraphMLP(hparam, dset, graph_path=graph_path, resnet_name=resnet_name).to(dev)
+# model = CGE(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-# model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None).to(dev)
-model = GAEStage3(hparam, dset, graph_path=graph_path, static_inp=static_inp, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-# model = GAEBiD(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-# model = GAEStage3ED(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', resnet_name=resnet_name, pretrained_gae=None).to(dev)
+model = GAEStage3(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAEBiD(hparam, dset, graph_path=graph_path, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAEStage3ED(hparam, dset, graph_path=graph_path, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 
 model_params, resnet_params = [], []
 for name, param in model.named_parameters():

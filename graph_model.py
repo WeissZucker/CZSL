@@ -13,7 +13,7 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class GraphModelBase(nn.Module):
-  def __init__(self, hparam, dset, graph_path, train_only=False, static_inp=True, resnet_name=None):
+  def __init__(self, hparam, dset, graph_path, train_only=False, resnet_name=None):
     super(GraphModelBase, self).__init__()
     self.hparam = hparam
     self.nattrs, self.nobjs = len(dset.attrs), len(dset.objs)
@@ -38,13 +38,6 @@ class GraphModelBase(nn.Module):
     self.nodes = graph["embeddings"].to(dev)
     adj = graph["adj"]
     self.edge_index = torch.tensor(np.array([adj.row, adj.col]), dtype=torch.long).to(dev) # np.array purely for suppressing pytorch conversion warning
-    
-    if static_inp and self.resnet:
-      self.resnet = frozen(self.resnet)
-    else:
-      #self.nodes = nn.Parameter(self.nodes)
-      pass
-
 
 
 class GraphEncoder(nn.Module):
@@ -69,8 +62,8 @@ class GraphEncoder(nn.Module):
       
 
 class GraphModel(GraphModelBase):
-  def __init__(self, dset, graph_path, train_only=True, static_inp=True):
-    super(GraphModel, self).__init__(dset, graph_path, train_only=train_only, static_inp=static_inp)
+  def __init__(self, dset, graph_path, train_only=True):
+    super(GraphModel, self).__init__(dset, graph_path, train_only=train_only)
 
     self.shared_emb_dim = 512
     hidden_layer_sizes = [2048, 2048]
@@ -120,7 +113,7 @@ class GraphModel(GraphModelBase):
         
 
 class GraphMLP(GraphModelBase):
-  def __init__(self, hparam, dset, graph_path=None, static_inp=True, resnet_name=None):
+  def __init__(self, hparam, dset, graph_path=None, resnet_name=None):
     super(GraphMLP, self).__init__(hparam, dset, graph_path, resnet_name=resnet_name)
     
     self.hparam.add_dict({'graph_encoder_layers': [2048], 'node_dim': 800})
@@ -226,8 +219,8 @@ class ReciprocalClassifierGraph(GraphModelBase):
 
   
 class GAE(GraphModelBase):
-    def __init__(self, dset, graph_path, static_inp=True, resnet_name=None, pretrained_gae=None):
-      super(GAE, self).__init__(dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
+    def __init__(self, dset, graph_path, resnet_name=None, pretrained_gae=None):
+      super(GAE, self).__init__(dset, graph_path, resnet_name=resnet_name)
 
       self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
       for i, (attr, obj) in enumerate(dset.train_pairs):
@@ -275,8 +268,8 @@ class GAE(GraphModelBase):
 
 
 class GAEStage3(GraphModelBase):
-    def __init__(self, hparam, dset, graph_path=None, static_inp=True, train_only=False, resnet_name=None, pretrained_gae=None, pretrained_mlp=None):
-        super(GAEStage3, self).__init__(hparam, dset, graph_path, static_inp=static_inp, train_only=train_only, resnet_name=resnet_name)
+    def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, pretrained_gae=None, pretrained_mlp=None):
+        super(GAEStage3, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name)
         
         self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
         for i, (attr, obj) in enumerate(dset.train_pairs):
@@ -338,8 +331,8 @@ class GAEStage3(GraphModelBase):
 
       
 class GAEBiD(GraphModelBase):
-    def __init__(self, hparam, dset, graph_path=None, static_inp=True, resnet_name=None, pretrained_gae=None, pretrained_mlp=None, fscore_path=None):
-        super(GAEBiD, self).__init__(hparam, dset, graph_path, static_inp=static_inp, resnet_name=resnet_name)
+    def __init__(self, hparam, dset, graph_path=None, resnet_name=None, pretrained_gae=None, pretrained_mlp=None, fscore_path=None):
+        super(GAEBiD, self).__init__(hparam, dset, graph_path, resnet_name=resnet_name)
         
         self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
         for i, (attr, obj) in enumerate(dset.train_pairs):
