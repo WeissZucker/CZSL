@@ -24,12 +24,13 @@ else:
   dev = "cpu"
 
 
-# model_name = "gae_ut_cw_trainonly"
+# model_name = "gae_cgqa_cw"
 
-dataset_name = 'MITg'
+dataset_name = 'UTg'
 cpu_eval = True
-feat_file = 'compcos.t7'
-resnet_name = None #'resnet18'
+feat_file = None #'compcos.t7'
+resnet_name = 'resnet18'
+resnet_lr = 5e-6
 with_image = resnet_name is not None
 
 train_only = False
@@ -38,11 +39,14 @@ static_inp = True
 take_compo_scores = True
 open_world = True
 lr = 5e-5
+weight_decay = 0
 num_epochs = 200
-batch_size = 128
+batch_size = 32
 
 hparam = HParam()
-hparam.add_dict({'lr': lr, 'batchsize': batch_size})
+hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay})
+if resnet_name:
+  hparam.add_dict({'resnet': resnet_name, 'resnet_lr': resnet_lr})
 
 # =======   Dataset & Evaluator  =======
 data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
@@ -83,21 +87,23 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = ReciprocalClassifier(resnet_name, img_mlp_layer_sizes=[1000], projector_mlp_layer_sizes=[1200,1150, 1000]).to(dev)
 # model = PrimitiveContrastive(train_dataloader).to(dev)
 # model = SemanticReciprocalClassifier(train_dataloader, [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-# model = SemanticReciprocalClassifierOracle(train_dataloader, [1000, 1300, 1500]).to(dev)
-# model = SemanticReciprocalClassifierGBU(train_dataloader, [700, 800, 900]).to(dev)
-# model = SemanticReciprocalClassifier2CompoOutput(train_dataloader, [768,1024]).to(dev)
 # model = GraphModel(dset, './embeddings/graph_primitive.pt', train_only=train_only, static_inp=static_inp).to(dev)
-# model = UnimodalContrastive(train_dataloader).to(dev)
 # model = GraphMLP(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name).to(dev)
-# model = CGE(dset, train_only=train_only, static_inp=static_inp, graph_path='./embeddings/graph_op.pt').to(dev)
+# model = CGE(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-# model = ReciprocalClassifierAttn(dset, [700, 800, 900], graph_path='./embeddings/graph_op.pt', resnet_name = resnet_name).to(dev)
 # model = GAE(dset, graph_path='./embeddings/graph_primitive.pt', static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None).to(dev)
 model = GAEStage3(hparam, dset, graph_path=graph_path, static_inp=static_inp, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 # model = GAEBiD(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 # model = GAEStage3ED(hparam, dset, graph_path=graph_path, static_inp=static_inp, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=hparam.lr)
+model_params, resnet_params = [], []
+for name, param in model.named_parameters():
+  if name.split('.')[0] == 'resnet':
+    resnet_params.append(param)
+  else:
+    model_params.append(param)
+params = [{'params': model_params}, {'params': resnet_params, 'lr': resnet_lr}]
+optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 
 # criterion = contrastive_hinge_loss
 # criterion = pair_cross_entropy_loss
@@ -112,11 +118,11 @@ optimizer = torch.optim.Adam(model.parameters(), lr=hparam.lr)
 # criterion = gae_stage_3_npair_loss([0.4, 0.4, 0, 0.2])
 # criterion = triplet_loss_x(10)
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
+# criterion = npair_loss
 
 # hparam.add('margin', 0.1)
 # criterion = EuclidNpairLoss(hparam.margin)
 
-# criterion = npair_loss
 ml_loss = losses.NPairsLoss()
 miner = miners.BatchHardMiner()
 hparam.add('loss_weights', [0.8, 0.8, 0.4, 1, 0.2])
