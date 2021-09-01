@@ -122,7 +122,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
                 # ignore instances that are not in current split
                 continue
             attr_id, obj_id = self.attr2idx[attr], self.obj2idx[obj]  
-            data_i = [image, attr, obj, attr_id, obj_id, self.activation_dict[image]]
+            data_i = [image, attr, obj, attr_id, obj_id]
             
             if settype == 'train':
                 if not self.ignore_mode or not self.ignored(attr_id, obj_id):
@@ -172,14 +172,14 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         def get_sample(i):
-            image, attr, obj, attr_id, obj_id, feat = self.data[i]
+            image, attr, obj, attr_id, obj_id = self.data[i]
               
             if self.with_image:
                 img = self.loader(image)
                 img = self.transform(img)
             else:
                 img = image
-            return [img, attr_id, obj_id, self.pair2idx[(attr, obj)], feat, image]
+            return [image, attr_id, obj_id, self.pair2idx[(attr, obj)], img]
           
         def get_batch_sample(sample_ids):
           samples = [get_sample(i) for i in sample_ids]
