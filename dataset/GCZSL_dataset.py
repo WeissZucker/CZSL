@@ -173,12 +173,12 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
     def __getitem__(self, index):
         def get_sample(i):
             image, attr, obj, attr_id, obj_id = self.data[i]
-              
+
             if self.with_image:
                 img = self.loader(image)
                 img = self.transform(img)
             else:
-                img = image
+                img = self.activation_dict[image]
             return [image, attr_id, obj_id, self.pair2idx[(attr, obj)], img]
           
         def get_batch_sample(sample_ids):
