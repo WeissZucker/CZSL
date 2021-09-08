@@ -24,23 +24,25 @@ else:
   dev = "cpu"
 
 
-model_name = "gae_ut_op_resnet"
+model_name = "gae3_cgqa_op_nomlloss"
 
-dataset_name = 'UTg'
-cpu_eval = False
-feat_file = None #'compcos.t7'
-resnet_name = 'resnet18'
+open_world = True
+dataset_name = 'CGQAg'
+cpu_eval = True
+feat_file = 'compcos.t7'
+resnet_name = None#'resnet18'
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
 train_only = False
 
 take_compo_scores = True
-open_world = True
 lr = 5e-5
 weight_decay = 0
 num_epochs = 200
-batch_size = 128
+batch_size = 32
+
+eval_every = 2
 
 hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay})
@@ -162,7 +164,7 @@ print(f"Logging to: {logger.log_dir}")
 
 try:
   train(model, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator,
-        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world, cpu_eval=cpu_eval)
+        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world, eval_every=3, cpu_eval=cpu_eval)
 except KeyboardInterrupt:
   print("Training stopped.")
 finally:

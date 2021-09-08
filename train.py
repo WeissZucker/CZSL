@@ -186,7 +186,7 @@ def cw_output_converter(output, dataloader, cpu_eval=False):
 
 
 def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True, cpu_eval=False) -> None:
+          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True, eval_every=1, cpu_eval=False) -> None:
   """
   Train the model.
   """
@@ -196,12 +196,13 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
   if not best:
     best = defaultdict(lambda: -1)
   val_dev = 'cpu' if cpu_eval else dev
-
+  
   for epoch in range(curr_epoch, curr_epoch+num_epochs):
+    
     # ==== Training ====
     running_loss = defaultdict(lambda : 0)
+    
     net.train()
-
     for i, sample in tqdm_iter(epoch, curr_epoch+num_epochs, train_dataloader):
       optimizer.zero_grad()
       if len(sample[0]) == 1:
@@ -220,6 +221,8 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
           logger.add_scalar(f'{key}/train', loss/i, epoch*len(train_dataloader)//100+i//100)
 
     # ==== Validation ====
+    if epoch % eval_every != 0:
+      continue
     test_loss = defaultdict(lambda: 0)
     outputs = []
     attr_labels, obj_labels = [], []
@@ -239,7 +242,7 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
     obj_labels = torch.cat(obj_labels).to(val_dev)
     if not open_world:
       outputs = cw_output_converter(outputs, val_dataloader, cpu_eval)
-
+    
     summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
 
     # ==== Logging ====
