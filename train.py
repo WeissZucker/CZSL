@@ -233,7 +233,10 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
         total_loss, loss_dict = criterion(output, sample)
         for key, loss in loss_dict.items():
           test_loss[key] += loss.item()
-        output = tuple([x.to('cpu') if isinstance(x, torch.Tensor) else x for x in output]) # put output on cpu to save gpu memory
+        if isinstance(output, tuple):
+          output = tuple([x.to(val_dev) if isinstance(x, torch.Tensor) else x for x in output])
+        else:
+          output = output.to(val_dev)
         outputs.append(output)
         attr_labels.append(sample[1])
         obj_labels.append(sample[2])
