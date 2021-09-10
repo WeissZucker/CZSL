@@ -57,6 +57,13 @@ class _Loss():
   def __call__(self, model_output, sample):
     return self.loss(model_output, sample)
   
+
+class DummyLoss(_Loss):
+  name = 'DummyLoss'
+  def loss(self, model_output, sample):
+    return None, dict()
+  
+dummy_loss = DummyLoss()
   
 class EuclideanLoss(_Loss):
   name = 'EuclideanLoss'
