@@ -1,4 +1,4 @@
-'''Symnet Dataset: https://arxiv.org/abs/2004.00587'''
+'''Code adapted from Symnet: https://arxiv.org/abs/2004.00587'''
 
 import numpy as np
 import torch, torchvision
