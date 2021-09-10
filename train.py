@@ -185,8 +185,8 @@ def cw_output_converter(output, dataloader, cpu_eval=False):
   return new_output
 
 
-def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
-          evaluator, curr_epoch=0, best=None, save_path=None, open_world=True, eval_every=1, cpu_eval=False) -> None:
+def train(net, hparam, optimizer, criterion, val_criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger,
+          evaluator, target_metric, curr_epoch=0, best=None, save_path=None, open_world=True, eval_every=1, cpu_eval=False) -> None:
   """
   Train the model.
   """
@@ -230,7 +230,7 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
     with torch.no_grad():
       for i, sample in tqdm.tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
         output = net(sample)
-        total_loss, loss_dict = criterion(output, sample)
+        total_loss, loss_dict = val_criterion(output, sample)
         for key, loss in loss_dict.items():
           test_loss[key] += loss.item()
         if isinstance(output, tuple):
@@ -266,14 +266,14 @@ def train(net, hparam, optimizer, criterion, num_epochs, batch_size, train_datal
       print(f'{key}:{value:.4f}|', end='')
     print()
   
-    if summary['OpAUC'] > best['OpAUC']:
-      best['OpAUC'] = summary['OpAUC']
+    if summary[target_metric] > best[target_metric]:
+      best[target_metric] = summary[target_metric]
       best['best_epoch'] = epoch
       if save_path:
         torch.save({
                       'model_state_dict': net.state_dict(),
                       'optimizer_state_dict': optimizer.state_dict(),
-                      'best_auc': summary['OpAUC'],
+                      target_metric: summary[target_metric],
                       'epoch': epoch+1,
                       'log_dir': logger.log_dir,
                       'log_name_suffix': logger.filename_suffix,
