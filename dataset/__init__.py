@@ -16,7 +16,7 @@ GCZSL_DS_ROOT = {
 }
 
 def get_dataloader(dataset_name, phase, feature_file="features.t7", batchsize=1, num_workers=0, open_world=True, train_only=False, 
-                   neg_sample_size=3, shuffle=None, **kwargs):
+                   random_sample_size=1,ignore_attrs=[], ignore_objs=[], shuffle=None, **kwargs):
     if dataset_name[-1]=='g':
         dataset_name = dataset_name[:-1]
         dataset =  GCZSL_dataset.CompositionDatasetActivations(
@@ -26,7 +26,9 @@ def get_dataloader(dataset_name, phase, feature_file="features.t7", batchsize=1,
             feat_file = feature_file,
             open_world = open_world,
             train_only = train_only,
-            neg_sample_size = neg_sample_size,
+            random_sample_size = random_sample_size,
+            ignore_attrs=ignore_attrs,
+            ignore_objs=ignore_objs,
             **kwargs)
     else:
         dataset =  CZSL_dataset.CompositionDatasetActivations(
@@ -35,7 +37,6 @@ def get_dataloader(dataset_name, phase, feature_file="features.t7", batchsize=1,
             phase = phase,
             feat_file = feature_file,
             **kwargs)
-    
 
     if shuffle is None:
         shuffle = (phase=='train')

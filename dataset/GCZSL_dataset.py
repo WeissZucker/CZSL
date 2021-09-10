@@ -13,20 +13,16 @@ from . import data_utils
 class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __init__(self, name, root, phase, feat_file, split='compositional-split', with_image=False, transform_type='normal', 
-                 open_world=True, train_only=False, neg_sample_size=3, ignore_attrs=None, ignore_objs=None):
+                 open_world=True, train_only=False, random_sample_size=1, ignore_attrs=[], ignore_objs=[]):
         self.root = root
         self.phase = phase
         self.split = split
         self.with_image = with_image
-        self.neg_sample_size = neg_sample_size
+        self.random_sample_size = random_sample_size
 
         self.feat_dim = None
         self.transform = data_utils.imagenet_transform(phase, transform_type)
         self.loader = data_utils.ImageLoader(self.root+'/images/')
-        
-        self.ignore_objs = ignore_objs
-        self.ignore_attrs = ignore_attrs
-        self.ignore_mode = ignore_objs or ignore_attrs
 
         if feat_file is not None:
           feat_file = os.path.join(root, feat_file)
@@ -39,9 +35,18 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         # pair = (attr, obj)
         (self.attrs, self.objs, self.pairs, 
         self.train_pairs, self.val_pairs, self.test_pairs) = self.parse_split()
-
+        
         self.attr2idx = {attr: idx for idx, attr in enumerate(self.attrs)}
         self.obj2idx = {obj: idx for idx, obj in enumerate(self.objs)}
+        
+        self.set_ignore_mode(ignore_attrs, ignore_objs)
+        
+        if self.ignore_mode:
+          all_pairs = self.train_pairs + self.val_pairs + self.test_pairs
+          train_pairs = [(attr, obj) for attr, obj in all_pairs if not self.ignored(attr, obj)]
+          val_pairs = [(attr, obj) for attr, obj in (self.train_pairs+self.val_pairs) if self.ignored(attr, obj)]
+          test_pairs = [(attr, obj) for attr, obj in (self.train_pairs+self.test_pairs) if self.ignored(attr, obj)]
+          self.train_pairs, self.val_pairs, self.test_pairs = train_pairs, val_pairs, test_pairs
         
         self.op_pair2idx = dict()
         for i, attr in enumerate(self.attrs):
@@ -59,7 +64,6 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         else:
           self.pair2idx = self.all_pair2idx
 
-
         self.train_data, self.val_data, self.test_data = self.get_split_info()
         
         if self.phase=='train':
@@ -68,50 +72,44 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
             self.data = self.val_data
         elif self.phase=='test':
             self.data = self.test_data
-
         
         # list of [img_name, attr, obj, attr_id, obj_id, feat]
         print ('#images = %d'%len(self.data))
         
-        
-        # fix later -- affordance thing
-        # return {object: all attrs that occur with obj}
-        self.obj_affordance_mask = []
-        for _obj in self.objs:
-            candidates = [x[1] for x in self.train_data+self.test_data if x[2]==_obj]
-            # x = (_,attr,obj,_,_,_)
-            affordance = set(candidates)
-            mask = [1 if x in affordance else 0   for x in self.attrs]
-            self.obj_affordance_mask.append(mask)
-        
-
-        # negative image pool
+        # Sample imgs with the same obj but different attr
         samples_grouped_by_obj = [[] for _ in range(len(self.objs))]
-        for i,x in enumerate(self.train_data):
+        for i,x in enumerate(self.data):
             samples_grouped_by_obj[x[4]].append(i)
 
-        self.neg_pool = []  # [obj_id][attr_id] => list of sample id
+        self.sample_pool = []  # [obj_id][attr_id] => list of sample id
         for obj_id in range(len(self.objs)):
-            self.neg_pool.append([])
+            self.sample_pool.append([])
             for attr_id in range(len(self.attrs)):
-                self.neg_pool[obj_id].append(
+                self.sample_pool[obj_id].append(
                     [i for i in samples_grouped_by_obj[obj_id] if 
-                        self.train_data[i][3] != attr_id ]
+                        self.data[i][3] != attr_id]
                 )
+          
+    def set_ignore_mode(self, ignore_attrs, ignore_objs):
+        if ignore_attrs and type(ignore_attrs[0]) is str:
+          ignore_attrs = [self.attr2idx[attr] for attr in ignore_attrs]
+        self.ignore_attrs = set(ignore_attrs)
+        if ignore_objs and type(ignore_objs[0]) is str:
+          ignore_objs = [self.obj2idx[obj] for obj in ignore_objs]
+        self.ignore_objs = set(ignore_objs)
         
-        self.comp_gamma = {'a':1, 'b':1}
-        self.attr_gamma = {'a':1, 'b':1}
-        
-    def ignored(self, attr_id, obj_id):
-        return ((self.ignore_attrs is not None and attr_id in self.ignore_attrs) or
-                (self.ignore_objs is not None and obj_id in self.ignore_objs))
-        
+        self.ignore_mode = bool(ignore_objs or ignore_attrs)
+                
+    def ignored(self, attr, obj):
+        attr = attr if type(attr) is int else self.attr2idx[attr]
+        obj = obj if type(obj) is int else self.obj2idx[obj]
+        return self.ignore_mode and (attr in self.ignore_attrs or obj in self.ignore_objs)
+
     def get_split_info(self):
         data = torch.load(self.root+'/metadata.t7')
         train_pair_set = set(self.train_pairs)
         test_pair_set = set(self.test_pairs)
         train_data, val_data, test_data = [], [], []
-
 
         print("natural split "+self.phase)
         for instance in data:
@@ -125,20 +123,23 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
             data_i = [image, attr, obj, attr_id, obj_id]
             
             if settype == 'train':
-                if not self.ignore_mode or not self.ignored(attr_id, obj_id):
+                if not self.ignored(attr_id, obj_id):
                     train_data.append(data_i)
-                elif self.ignore_mode and self.ignored(attr_id, obj_id):
-                    test_data.append(data_i)
+                else:
+                    if self.phase == 'val':
+                      val_data.append(data_i)
+                    else:
+                      test_data.append(data_i)
             elif settype == 'val':
-                if not self.ignore_mode or self.ignored(attr_id, obj_id):
+                if self.ignore_mode and not self.ignored(attr_id, obj_id):
+                  train_data.append(data_i)
+                else:
                   val_data.append(data_i)
-                elif self.ignore_mode and not self.ignored(attr_id, obj_id):
-                  train_data.append(data_i)
             elif settype == 'test':
-                if not self.ignore_mode or self.ignored(attr_id, obj_id):
-                  test_data.append(data_i)
-                elif self.ignore_mode and not self.ignored(attr_id, obj_id):
+                if self.ignore_mode and not self.ignored(attr_id, obj_id):
                   train_data.append(data_i)
+                else:
+                  test_data.append(data_i)
             else:
                 raise NotImplementedError(settype)
 
@@ -146,7 +147,6 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
 
     def parse_split(self):
-
         def parse_pairs(pair_list):
             with open(pair_list,'r') as f:
                 pairs = f.read().strip().split('\n')
@@ -166,46 +166,34 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         return all_attrs, all_objs, all_pairs, tr_pairs, val_pairs, ts_pairs
 
 
-
-    def sample_negative(self, attr_id, obj_id):
-        return np.random.choice(self.neg_pool[obj_id][attr_id], self.neg_sample_size)
+    def random_sample(self, attr_id, obj_id):
+        return np.random.choice(self.sample_pool[obj_id][attr_id], self.random_sample_size)
 
     def __getitem__(self, index):
         def get_sample(i):
-            image, attr, obj, attr_id, obj_id = self.data[i]
+            image_name, attr, obj, attr_id, obj_id = self.data[i]
 
             if self.with_image:
-                img = self.loader(image)
+                img = self.loader(image_name)
                 img = self.transform(img)
             else:
-                img = self.activation_dict[image]
-            return [image, attr_id, obj_id, self.pair2idx[(attr, obj)], img]
+                img = self.activation_dict[image_name]
+            return [image_name, attr_id, obj_id, self.pair2idx[(attr, obj)], img]
           
         def get_batch_sample(sample_ids):
           samples = [get_sample(i) for i in sample_ids]
-          samples = list(zip(*samples))
+          samples = [list(x) for x in zip(*samples)]
           return samples
         
-        image_name = self.data[index][0]
-        pos = get_sample(index)
+        sample = get_sample(index)
+        attr_id, obj_id = sample[1], sample[2]
+ 
+        rand_sample_id = self.random_sample(attr_id, obj_id) # negative example
+        rand_sample = get_batch_sample(rand_sample_id)
 
-        mask = np.array(self.obj_affordance_mask[pos[2]], dtype=np.float32)
+        data = sample + rand_sample
 
-        if self.phase=='train':
-#             if self.ignore_mode:
-#               negid = [0] * self.neg_sample_size
-#             else:
-#               negid = self.sample_negative(pos[1], pos[2]) # negative example
-#             if self.neg_sample_size > 1:
-#               neg = get_batch_sample(negid)
-#             else:
-#               neg = get_sample(negid[0])
-            data = pos + [mask]
-        else:
-            data = pos + [mask]
-
-        # train [img, attr_id, obj_id, pair_id, img_feature, img_path, img, attr_id, obj_id, pair_id, img_feature, img_path, aff_mask]
-        # test [img, attr_id, obj_id, pair_id, img_feature, img_path, aff_mask]
+        # train [img_name, attr_id, obj_id, pair_id, img_feature, img_name, attr_id, obj_id, pair_id, img_feature]
 
         return data
 
@@ -275,8 +263,6 @@ class CompositionDatasetActivationsGenerator(CompositionDatasetActivations):
         print ('features for %d images generated'%(len(image_files)))
 
         torch.save({'features': image_feats, 'files': image_files}, out_file)
-
-
 
 
 
