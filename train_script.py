@@ -24,7 +24,7 @@ else:
   dev = "cpu"
 
 
-model_name = "gae_mit_ir_pretrain"
+model_name = "gaeir_mit_pretrained"
 
 open_world = True
 dataset_name = 'MITg'
@@ -34,7 +34,7 @@ resnet_name = None#'resnet18'
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
-train_only = False
+train_only = True
 
 take_compo_scores = True
 lr = 5e-5
@@ -45,7 +45,8 @@ batch_size = 32
 eval_every = 2
 
 hparam = HParam()
-hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay})
+hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay,
+                'train_only': train_only})
 if resnet_name:
   hparam.add_dict({'resnet': resnet_name, 'resnet_lr': resnet_lr})
 
@@ -69,10 +70,10 @@ val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_
 dset = train_dataloader.dataset
 nbias = 20
 
-val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
-target_metric = 'OpUnseen'
-# val_evaluator = IREvaluator(cpu_eval)
-# target_metric = 'IR_Acc'
+# val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
+# target_metric = 'OpUnseen'
+val_evaluator = IREvaluator(cpu_eval)
+target_metric = 'IR_Acc'
 
 # ======  Load HParam from checkpoint =======
 try:
@@ -91,7 +92,7 @@ except FileNotFoundError:
 
 if checkpoint and 'hparam_dict' in checkpoint:
   hparam.add_dict(checkpoint['hparam_dict'])
-  hparam.freeze = True
+  hparam.freeze()
   
 
 # hparam.add_dict({'graph_encoder_layers': [1024], 'node_dim': 600})
@@ -115,8 +116,9 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = GraphMLP(hparam, dset, graph_path=graph_path, resnet_name=resnet_name).to(dev)
 # model = CGE(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-# model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+# model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
+pretrained_gae = './models/gae_mit_obj_filter_op_trainonly.pt'
+model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=pretrained_gae).to(dev)
 
 model_params, resnet_params = [], []
 for name, param in model.named_parameters():
@@ -141,8 +143,8 @@ optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 # criterion = npair_loss
 
-hparam.add('recon_loss_ratio', 0.1)
-criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
+# hparam.add('recon_loss_ratio', 0.1)
+# criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
 
 
 # hparam.add('margin', 0.1)
@@ -155,13 +157,13 @@ criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
 # criterion = GAEMLLoss(ml_loss, loss_weights=hparam.loss_weights, miner=miner)
 # criterion = GAEEDLoss(ml_loss, loss_weights=hparam.loss_weights, miner=miner)
 
-# criterion = euclidean_dist_loss
+criterion = euclidean_dist_loss
 
 hparam.add_dict(criterion.hparam_dict)
 
-val_criterion = criterion
-# val_criterion = dummy_loss
-# hparam.add_dict(val_criterion.hparam_dict)
+# val_criterion = criterion
+val_criterion = dummy_loss
+hparam.add_dict(val_criterion.hparam_dict)
 
 
 # === Restore model and logger from Checkpoint ===

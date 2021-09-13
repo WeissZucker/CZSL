@@ -27,10 +27,10 @@ class DummyLogger():
 class HParam():
   def __init__(self):
     self.hparam_dict = dict() # For tensorboard logger and restoring state
-    self.freeze = False # If true, attributes can't be updated. But new attribute can still be added
+    self.frozen = False # If true, attributes can't be updated. But new attribute can still be added
     
   def add(self, name, value):
-    if self.freeze and name in self.hparam_dict:
+    if self.frozen and name in self.hparam_dict:
       return
     setattr(self, name, value)
     self.hparam_dict[name] = value
@@ -43,6 +43,9 @@ class HParam():
     if name not in self.hparam_dict:
       raise Exception(f"HParam: {name} doesn't exist!")
     return getattr(self, name)
+  
+  def freeze(self):
+    self.frozen = True
   
   def __repr__(self):
     return repr(self.hparam_dict)
