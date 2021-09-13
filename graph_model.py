@@ -283,8 +283,14 @@ class GAE(GraphModelBase):
 
 
 class GAE_IR(GraphModelBase):
-    def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, pretrained_gae=None, pretrained_mlp=None):
+    def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, pretrained_gae=None):
         super(GAE_IR, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name)
+        
+        if pretrained_gae:
+          checkpoint = torch.load(pretrained_gae)
+          hparam.freeze() # parameters that have already been set won't be updated 
+          hparam.add_dict(checkpoint['hparam_dict'])
+          del checkpoint
         
         self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
         for i, (attr, obj) in enumerate(dset.train_pairs):
