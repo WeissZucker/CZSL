@@ -190,9 +190,12 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         
         sample = get_sample(index)
         attr_id, obj_id = sample[1], sample[2]
- 
-        rand_sample_id = self.random_sample(attr_id, obj_id) # negative example
-        rand_sample = get_batch_sample(rand_sample_id)
+        
+        if self.random_sample_size == 0:
+          rand_sample = []
+        else:
+          rand_sample_id = self.random_sample(attr_id, obj_id) # negative example
+          rand_sample = get_batch_sample(rand_sample_id)
 
         data = sample + rand_sample
 
