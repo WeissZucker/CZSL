@@ -103,6 +103,19 @@ class PairCE(_Loss):
   
 pair_cross_entropy_loss = PairCE()
 
+class BatchCE(_Loss):
+  name = 'BatchCE'
+  def loss(self, model_output, sample):
+    embs, targets = model_output # [batch_size, npairs]
+    nsample = len(embs)
+    scores = embs @ targets.T
+    labels = torch.tensor(range(nsample)).to(dev)
+    loss = cross_entropy_loss(scores, labels)
+    loss_dict = {'batch_ce_loss': loss}
+    return loss, loss_dict
+  
+batch_ce_loss = BatchCE()
+
 class GAELoss(_Loss):
   name = 'GAELoss'
   def __init__(self, recon_loss_ratio):
@@ -219,9 +232,7 @@ class NPairLoss(_Loss):
     self.margin = margin
     
   def loss(self, model_output, sample):
-    if not isinstance(model_output, tuple):
-      return pair_cross_entropy_loss(model_output, sample)
-    pair_pred, embs, anchors = model_output
+    embs, anchors = model_output
     nsample = len(embs)
     pair_id = sample[3]
     dot = embs @ anchors.T
@@ -229,10 +240,8 @@ class NPairLoss(_Loss):
 #     loss = torch.log(torch.exp(dot - pos.view(1, -1)).sum(dim=0)).mean()
     loss = dot - pos.view(1, -1) + self.margin
     loss = torch.max(loss, torch.zeros_like(loss)).sum(dim=0).mean()
-    pair_loss, pair_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
-    loss_dict = {'npair_loss': loss} | pair_loss_dict
-    total_loss = pair_loss + loss
-    return total_loss, loss_dict
+    loss_dict = {'npair_loss': loss}
+    return loss, loss_dict
   
 npair_loss = NPairLoss()
   
