@@ -13,7 +13,7 @@ from . import data_utils
 class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __init__(self, name, root, phase, feat_file, split='compositional-split', with_image=False, transform_type='normal', 
-                 open_world=True, train_only=False, random_sample_size=1, ignore_attrs=[], ignore_objs=[]):
+                 open_world=True, train_only=False, random_sample_size=0, ignore_attrs=[], ignore_objs=[]):
         self.root = root
         self.phase = phase
         self.split = split
@@ -167,7 +167,10 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
 
     def random_sample(self, attr_id, obj_id):
-        return np.random.choice(self.sample_pool[obj_id][attr_id], self.random_sample_size)
+        candidates = self.sample_pool[obj_id][attr_id]
+        if len(candidates)==0:
+          raise Exception(f"Can't find random sampling candidates for the pair: {self.attrs[attr_id]}, {self.objs[obj_id]}.")
+        return np.random.choice(candidates, self.random_sample_size)
 
     def __getitem__(self, index):
         def get_sample(i):
