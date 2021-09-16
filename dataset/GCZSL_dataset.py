@@ -40,12 +40,12 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         self.obj2idx = {obj: idx for idx, obj in enumerate(self.objs)}
         
         self.set_ignore_mode(ignore_attrs, ignore_objs)
-        
+
         if self.ignore_mode:
           all_pairs = self.train_pairs + self.val_pairs + self.test_pairs
           train_pairs = [(attr, obj) for attr, obj in all_pairs if not self.ignored(attr, obj)]
-          val_pairs = [(attr, obj) for attr, obj in (self.train_pairs+self.val_pairs) if self.ignored(attr, obj)]
-          test_pairs = [(attr, obj) for attr, obj in (self.train_pairs+self.test_pairs) if self.ignored(attr, obj)]
+          val_pairs = [(attr, obj) for attr, obj in all_pairs if self.ignored(attr, obj)]
+          test_pairs = [(attr, obj) for attr, obj in all_pairs if self.ignored(attr, obj)]
           self.train_pairs, self.val_pairs, self.test_pairs = train_pairs, val_pairs, test_pairs
         
         self.op_pair2idx = dict()
@@ -135,6 +135,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
                   train_data.append(data_i)
                 else:
                   val_data.append(data_i)
+                  test_data.append(data_i)
             elif settype == 'test':
                 if self.ignore_mode and not self.ignored(attr_id, obj_id):
                   train_data.append(data_i)
