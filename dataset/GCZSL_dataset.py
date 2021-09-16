@@ -133,9 +133,11 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
             elif settype == 'val':
                 if self.ignore_mode and not self.ignored(attr_id, obj_id):
                   train_data.append(data_i)
+                elif self.ignore_mode: # for the compatibility with CompAE dataset
+                  test_data.append(data_i)
                 else:
                   val_data.append(data_i)
-                  test_data.append(data_i)
+                  
             elif settype == 'test':
                 if self.ignore_mode and not self.ignored(attr_id, obj_id):
                   train_data.append(data_i)
