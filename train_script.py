@@ -24,23 +24,23 @@ else:
   dev = "cpu"
 
 
-model_name = "gaeir_mit_pretrained"
+model_name = "gaeir_mit"
 
 open_world = True
 dataset_name = 'MITg'
-cpu_eval = False
+cpu_eval = True
 feat_file = 'compcos.t7'
 resnet_name = None#'resnet18'
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
-train_only = True
+train_only = False
 
 take_compo_scores = True
 lr = 5e-5
 weight_decay = 0
 num_epochs = 200
-batch_size = 32
+batch_size = 128
 
 eval_every = 2
 
@@ -52,6 +52,8 @@ if resnet_name:
 
 # =======   Dataset & Evaluator  =======
 data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
+rand_sample_size=0
+ignore_objs = []
 
 ignore_objs = [
             'armor', 'bracelet', 'bush', 'camera', 'candy', 'castle',
@@ -64,16 +66,21 @@ ignore_objs = [
             'wheel', 'window', 'wool'
             ]
 
+rand_sample_size=1 # for image retrieval model, dataset also return n randomly picked target imgs
+
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
-                                          train_only=train_only, shuffle=True, ignore_objs=ignore_objs)
-val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, ignore_objs=ignore_objs)
+                                          train_only=train_only, shuffle=True, random_sample_size=rand_sample_size, ignore_objs=ignore_objs)
+if rand_sample_size>0:
+  batch_size = 1
+val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image,
+                                        open_world=open_world, random_sample_size=rand_sample_size, ignore_objs=ignore_objs)
 dset = train_dataloader.dataset
 nbias = 20
-
 # val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
+# target_metric = 'OpAUC'
 # target_metric = 'OpUnseen'
 val_evaluator = IREvaluator(cpu_eval)
-target_metric = 'IR_Acc'
+target_metric = 'IR_Rec'
 
 # ======  Load HParam from checkpoint =======
 try:
@@ -117,7 +124,7 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = CGE(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
 # model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-pretrained_gae = './models/gae_mit_obj_filter_op_trainonly.pt'
+pretrained_gae = None#'./models/gae_mit_obj_filter_op_trainonly.pt'
 model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=pretrained_gae).to(dev)
 
 model_params, resnet_params = [], []
@@ -142,6 +149,7 @@ optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 # criterion = triplet_loss_x(10)
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 # criterion = npair_loss
+criterion = batch_ce_loss
 
 # hparam.add('recon_loss_ratio', 0.1)
 # criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
@@ -157,13 +165,13 @@ optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 # criterion = GAEMLLoss(ml_loss, loss_weights=hparam.loss_weights, miner=miner)
 # criterion = GAEEDLoss(ml_loss, loss_weights=hparam.loss_weights, miner=miner)
 
-criterion = euclidean_dist_loss
+# criterion = euclidean_dist_loss
 
 hparam.add_dict(criterion.hparam_dict)
 
 # val_criterion = criterion
 val_criterion = dummy_loss
-hparam.add_dict(val_criterion.hparam_dict)
+# hparam.add_dict(val_criterion.hparam_dict)
 
 
 # === Restore model and logger from Checkpoint ===
