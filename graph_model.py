@@ -309,9 +309,9 @@ class GAE_IR(GraphModelBase):
         self.pair_fc = ParametricMLP(self.hparam.node_dim*2, self.hparam.shared_emb_dim, 
                                      self.hparam.pair_fc_layers, norm_output=self.hparam.pair_fc_norm)
         
-        self.hparam.add_dict({'attr_cls_layers': [1500], 'obj_cls_layers': [1500]})
-        self.attr_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nattrs, self.hparam.attr_cls_layers)
-        self.obj_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nobjs, self.hparam.obj_cls_layers)
+        self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
+        self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
+                                      self.hparam.compo_fc_layers, norm_output=self.hparam.compo_fc_norm)
         
         self.dset = dset
       
@@ -346,33 +346,47 @@ class GAE_IR(GraphModelBase):
       else:
         s_img = x[4].to(dev)
         t_img = x[9][0].to(dev)
-      s_attr_id, t_attr_id, obj_id = x[1], x[6][0], x[2]
-      s_img_feats = self.img_fc(s_img)
-      t_img_feats = self.img_fc(t_img)
+      t_attr_id, obj_id = x[6][0], x[2]
       
       nodes = self.gae.encode(self.nodes, self.train_pair_edges)
-      s_pair_feats = self.get_pair(s_attr_id, obj_id, nodes)
       t_pair_feats = self.get_pair(t_attr_id, obj_id, nodes)
       
-      query = s_img_feats + (t_pair_feats - s_pair_feats)
-      target = t_img_feats
-      return query, target
+      # s_img_feats or s_img
+      theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
+      target = self.img_fc(t_img)
+      return theta, target
+    
+    def generate_test_queries(self, attr_id, obj_id):
+      attr = self.dset.attrs[attr_id]
+      obj = self.dset.objs[obj_id]
+      t_attrs = set([_attr for _attr, _obj in self.dset.test_pairs if obj==_obj and attr!=_attr])
+      t_pairs = torch.tensor([self.dset.pair2idx[(_attr, obj)] for _attr in t_attrs])
+      t_attrs = torch.tensor([self.dset.attr2idx[_attr] for _attr in t_attrs])
+      return t_attrs, t_pairs
     
     def val_forward(self, x):
       if self.resnet:
         s_img = self.resnet(x[4].to(dev))
       else:
         s_img = x[4].to(dev)
-      s_attr_id, t_attr_id, obj_id = x[1], x[6][0], x[2]
-      s_pair_id, t_pair_id = x[3], x[8][0]
+ 
+      s_attr_id, obj_id, s_pair_id = x[1:4]
+      t_attr_id, t_pair_id = self.generate_test_queries(s_attr_id, obj_id)
+      ntarget = len(t_pair_id)
+      s_attr_id = s_attr_id.repeat(ntarget)
+      s_pair_id = s_pair_id.repeat(ntarget)
+      obj_id = obj_id.repeat(ntarget)
+      s_img = s_img.repeat(ntarget, 1)
+      
       s_img_feats = self.img_fc(s_img)
       
       nodes = self.gae.encode(self.nodes, self.train_pair_edges)
-      s_pair_feats = self.get_pair(s_attr_id, obj_id, nodes)
+
       t_pair_feats = self.get_pair(t_attr_id, obj_id, nodes)
 
-      query = s_img_feats + (t_pair_feats - s_pair_feats)
-      return s_img_feats, query, s_pair_id, t_pair_id
+      theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
+
+      return theta, t_pair_id, s_img_feats[0].view(1,-1), s_pair_id[0].view(1,-1)
     
     def forward(self, x):
       if self.training:
