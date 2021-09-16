@@ -271,28 +271,28 @@ class IREvaluator():
   def __init__(self, cpu_eval):
     self.dev = 'cpu' if cpu_eval else dev
     
-  def acc(self, preds, labels):
+  def recall(self, preds, labels):
     # preds: [nsample, k]
     nsample = len(preds)
     labels = labels.unsqueeze(1)
-    acc = (preds == labels).any(dim=1).float().mean()
-    return acc
+    rec = (preds == labels).any(dim=1).float().mean()
+    return rec
   
   def eval_output(self, output, attr_labels, obj_labels, topk=1):
     attr_labels = attr_labels.to(self.dev)
     obj_labels = obj_labels.to(self.dev)
 
     output = list(zip(*output))
-    img_feats = torch.cat(output[0])
-    queries = torch.cat(output[1])
-    s_pairs = torch.cat(output[2])
-    t_pairs = torch.cat(output[3])
+    theta = torch.cat(output[0])
+    t_pair_ids = torch.cat(output[1])
+    img_feats = torch.cat(output[2])
+    pair_ids = torch.cat(output[3]).view(-1)
+
+    dot = theta @ img_feats.T
+    predictions = dot.topk(topk, dim=1).indices # nqueries * topk
+    pred_pairs = pair_ids[predictions]
     
-    dist = torch.cdist(queries, img_feats)
-    predictions = dist.topk(topk, dim=1).indices # nsample * topk
-    pred_pairs = s_pairs[predictions]
-    
-    acc = self.acc(pred_pairs, t_pairs)
-    report = {'IR_Acc': acc.item()}
+    rec = self.recall(pred_pairs, t_pair_ids)
+    report = {'IR_Rec': rec.item()}
     return report
     
