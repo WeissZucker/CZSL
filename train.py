@@ -243,9 +243,10 @@ def train(net, hparam, optimizer, criterion, val_criterion, num_epochs, batch_si
 
     attr_labels = torch.cat(attr_labels).to(val_dev)
     obj_labels = torch.cat(obj_labels).to(val_dev)
-    if not open_world:
+
+    if not open_world and not isinstance(evaluator, IREvaluator):
       outputs = cw_output_converter(outputs, val_dataloader, cpu_eval)
-    
+
     summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
 
     # ==== Logging ====
