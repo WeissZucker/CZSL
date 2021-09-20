@@ -48,13 +48,13 @@ def get_fasttext_embs(tokens, ft):
   
 class ParametricMLP(nn.Module):
   '''Output size of each inner layer specified by [layer_sizes]'''
-  def __init__(self, in_features, out_features, layer_sizes, norm_output=False, dropout=0.5):
+  def __init__(self, in_features, out_features, layer_sizes, batch_norm=True, norm_output=False, dropout=0.5):
     super(ParametricMLP, self).__init__()
     layers = []
     for layer_size in layer_sizes:
       layer = nn.Sequential(
         nn.Linear(in_features, layer_size),
-        nn.BatchNorm1d(layer_size),
+        nn.BatchNorm1d(layer_size) if batch_norm else nn.Identity(),
         nn.ReLU(),
         nn.Dropout(dropout))
       layers.append(layer)
