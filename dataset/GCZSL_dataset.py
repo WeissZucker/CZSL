@@ -13,12 +13,12 @@ from . import data_utils
 class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __init__(self, name, root, phase, feat_file, split='compositional-split', with_image=False, transform_type='normal', 
-                 open_world=True, train_only=False, random_sample_size=0, ignore_attrs=[], ignore_objs=[]):
+                 open_world=True, train_only=False, random_sampling=False, ignore_attrs=[], ignore_objs=[]):
         self.root = root
         self.phase = phase
         self.split = split
         self.with_image = with_image
-        self.random_sample_size = random_sample_size
+        self.random_sampling = random_sampling
 
         self.feat_dim = None
         self.transform = data_utils.imagenet_transform(phase, transform_type)
@@ -173,7 +173,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         candidates = self.sample_pool[obj_id][attr_id]
         if len(candidates)==0:
           raise Exception(f"Can't find random sampling candidates for the pair: {self.attrs[attr_id]}, {self.objs[obj_id]}.")
-        return np.random.choice(candidates, self.random_sample_size)
+        return np.random.choice(candidates)
 
     def __getitem__(self, index):
         def get_sample(i):
@@ -194,11 +194,11 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
         sample = get_sample(index)
         attr_id, obj_id = sample[1], sample[2]
         
-        if self.random_sample_size == 0:
+        if not self.random_sampling:
           rand_sample = []
         else:
           rand_sample_id = self.random_sample(attr_id, obj_id) # negative example
-          rand_sample = get_batch_sample(rand_sample_id)
+          rand_sample = get_sample(rand_sample_id)
 
         data = sample + rand_sample
 
