@@ -16,7 +16,7 @@ from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
 import dataset
-from evaluator import Evaluator
+from evaluator import *
 
 if torch.cuda.is_available():  
   dev = "cuda:0" 
@@ -219,7 +219,7 @@ def train(net, hparam, optimizer, criterion, val_criterion, num_epochs, batch_si
       if i % 100 == 99:
         for key, loss in running_loss.items():
           logger.add_scalar(f'{key}/train', loss/i, epoch*len(train_dataloader)//100+i//100)
-
+          
     # ==== Validation ====
     if epoch % eval_every != 0:
       continue
