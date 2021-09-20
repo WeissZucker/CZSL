@@ -242,10 +242,11 @@ class Fashion200k(BaseDataset):
         'obj': self.imgs[idx]['obj']
         '''
         query = self.test_queries[idx]
+        img_idx  = query['source_img_id']
         attr_id = self.attr2idx[query['source_caption']]
         obj_id = self.obj2idx[query['obj']]
         pair_id = self.pair2idx[(query['source_caption'], query['obj'])]
-        sample = [idx, attr_id, obj_id, pair_id, self.get_img(idx)]
+        sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx)]
         return sample
       
     def __getitem__(self, idx):
