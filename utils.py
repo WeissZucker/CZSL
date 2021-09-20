@@ -116,6 +116,22 @@ class BatchCE(_Loss):
   
 batch_ce_loss = BatchCE()
 
+class ObjAwareLoss(_Loss):
+  name = 'ObjAwareLoss'
+  def loss(self, model_output, sample):
+    theta, targets, neg_pairs = model_output
+    nsample = len(theta)
+    loss = 0
+    for i in range(nsample):
+      loss += torch.log(1+torch.exp((neg_pairs[i]@targets[i].T - theta[i]@targets[i].T)/2)).mean()
+    loss /= nsample
+    simple_loss, _ = batch_ce_loss((theta, targets), sample)
+    total_loss = loss + simple_loss
+    loss_dict = {'batch_ce_loss': simple_loss, 'obj_aware_loss': loss}
+    return total_loss, loss_dict
+  
+obj_aware_loss = ObjAwareLoss()
+
 class GAELoss(_Loss):
   name = 'GAELoss'
   def __init__(self, recon_loss_ratio):

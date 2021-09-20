@@ -307,46 +307,46 @@ class GAE_IR(GraphModelBase):
         self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
                                     norm_output=self.hparam.img_fc_norm)
         self.pair_fc = ParametricMLP(self.hparam.node_dim*2, self.hparam.shared_emb_dim, 
-                                     self.hparam.pair_fc_layers, norm_output=self.hparam.pair_fc_norm)
+                                     self.hparam.pair_fc_layers, batch_norm=False, norm_output=self.hparam.pair_fc_norm)
         
-        self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
+        self.hparam.add_dict({'compo_fc_layers': [800, 1000], 'compo_fc_norm': True})
         self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
-                                      self.hparam.compo_fc_layers, norm_output=self.hparam.compo_fc_norm)
+                                      self.hparam.compo_fc_layers, batch_norm=False, norm_output=self.hparam.compo_fc_norm)
         
         self.dset = dset
-      
-    def get_all_pairs(self, nodes):
-      attr_nodes = nodes[:self.nattrs]
-      obj_nodes = nodes[self.nattrs:]
-      if self.dset.open_world:
-        all_pair_attrs = attr_nodes.repeat(1,self.nobjs).view(-1, self.hparam.node_dim)
-        all_pair_objs = obj_nodes.repeat(self.nattrs, 1)
-      else:
-        pairs = self.dset.pairs
-        all_pair_attr_ids = [self.dset.attr2idx[attr] for attr, obj in pairs]
-        all_pair_obj_ids = [self.dset.obj2idx[obj] for attr, obj in pairs]
-        all_pair_attrs = attr_nodes[all_pair_attr_ids]
-        all_pair_objs = obj_nodes[all_pair_obj_ids]
-        
-      all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
-      if self.train_only and self.training:
-        all_pairs = all_pairs[self.train_idx]
-      return all_pairs
-    
+ 
     def get_pair(self, attr_id, obj_id, nodes):
       attr_node = nodes[attr_id]
       obj_node = nodes[self.nattrs+obj_id]
       pair = torch.cat((attr_node, obj_node), dim=1)
       return self.pair_fc(pair)
     
-    def train_forward(self, x):
+    def get_all_neg_pairs(self, attr_id, obj_id, nodes):
+      """all pairs with the same obj but different attr"""
+      
+      attr_nodes = nodes[:self.nattrs]
+      obj_node = nodes[self.nattrs+obj_id].unsqueeze(0)
+      if self.dset.open_world and not self.train_only:
+        all_pair_attrs = torch.cat((attr_nodes[:attr_id], attr_nodes[attr_id+1:]))
+      else:
+        pairs = self.dset.pairs
+        obj = self.dset.objs[obj_id]
+        attr = self.dset.attrs[attr_id]
+        all_pair_attr_ids = [self.dset.attr2idx[_attr] for _attr, _obj in pairs if obj==_obj and attr!=_attr]
+        all_pair_attrs = attr_nodes[all_pair_attr_ids]
+        
+      all_pair_objs = obj_node.repeat(all_pair_attrs.size(0), 1)
+      all_pairs = torch.cat((all_pair_attrs, all_pair_objs), dim=1)
+      return self.pair_fc(all_pairs)
+    
+    def train_simple_forward(self, x):
       if self.resnet:
         s_img = self.resnet(x[4].to(dev))
-        t_img = self.resnet(x[9][0].to(dev)) # img with the same obj but different attr
+        t_img = self.resnet(x[9].to(dev)) # img with the same obj but different attr
       else:
         s_img = x[4].to(dev)
-        t_img = x[9][0].to(dev)
-      t_attr_id, obj_id = x[6][0], x[2]
+        t_img = x[9].to(dev)
+      t_attr_id, obj_id = x[6], x[2]
       
       nodes = self.gae.encode(self.nodes, self.train_pair_edges)
       t_pair_feats = self.get_pair(t_attr_id, obj_id, nodes)
@@ -355,6 +355,28 @@ class GAE_IR(GraphModelBase):
       theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
       target = self.img_fc(t_img)
       return theta, target
+    
+    def train_object_aware_forward(self, x):
+      if self.resnet:
+        s_img = self.resnet(x[4].to(dev))
+        t_img = self.resnet(x[9].to(dev)) # img with the same obj but different attr
+      else:
+        s_img = x[4].to(dev)
+        t_img = x[9].to(dev)
+      s_attr_ids, t_attr_ids, obj_ids = x[1], x[6], x[2]
+      
+      nodes = self.gae.encode(self.nodes, self.train_pair_edges)
+      t_pair_feats = self.get_pair(t_attr_ids, obj_ids, nodes)
+      
+      # s_img_feats or s_img
+      theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
+      targets = self.img_fc(t_img)
+      neg_pairs = []
+      for i, (attr_id, obj_id) in enumerate(zip(s_attr_ids, obj_ids)):
+        neg_pair = self.get_all_neg_pairs(attr_id, obj_id, nodes)
+        neg_pair = self.compo_fc(torch.cat((s_img[i:i+1].repeat(len(neg_pair),1), neg_pair), dim=1))
+        neg_pairs.append(neg_pair)
+      return theta, targets, neg_pairs
     
     def generate_test_queries(self, attr_id, obj_id):
       attr = self.dset.attrs[attr_id]
@@ -390,7 +412,7 @@ class GAE_IR(GraphModelBase):
     
     def forward(self, x):
       if self.training:
-        return self.train_forward(x)
+        return self.train_object_aware_forward(x)
       else:
         return self.val_forward(x)
       
