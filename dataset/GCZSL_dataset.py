@@ -14,6 +14,7 @@ class CompositionDatasetActivations(torch.utils.data.Dataset):
 
     def __init__(self, name, root, phase, feat_file, split='compositional-split', with_image=False, transform_type='normal', 
                  open_world=True, train_only=False, random_sampling=False, ignore_attrs=[], ignore_objs=[]):
+        self.name = name
         self.root = root
         self.phase = phase
         self.split = split
