@@ -278,7 +278,7 @@ class IREvaluator():
     rec = (preds == labels).any(dim=1).float().mean()
     return rec
   
-  def eval_output(self, output, attr_labels, obj_labels, topk=1):
+  def eval_output(self, output, attr_labels, obj_labels):
     attr_labels = attr_labels.to(self.dev)
     obj_labels = obj_labels.to(self.dev)
 
@@ -289,10 +289,15 @@ class IREvaluator():
     pair_ids = torch.cat(output[3]).view(-1)
 
     dot = theta @ img_feats.T
-    predictions = dot.topk(topk, dim=1).indices # nqueries * topk
-    pred_pairs = pair_ids[predictions]
-    
-    rec = self.recall(pred_pairs, t_pair_ids)
-    report = {'IR_Rec': rec.item()}
+    mask = torch.zeros_like(dot, dtype=torch.bool)
+    for i in range(len(theta)):
+      mask[i,i] = True
+    dot[mask] = -1e5
+    report = dict()
+    for k in [1, 10, 50]:
+      predictions = dot.topk(k, dim=1).indices # nqueries * topk
+      pred_pairs = pair_ids[predictions]
+      rec = self.recall(pred_pairs, t_pair_ids)
+      report[f'IR_Rec/top{k}'] = rec.item()
     return report
     
