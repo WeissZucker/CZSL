@@ -49,11 +49,20 @@ class BaseDataset(torch.utils.data.Dataset):
 class Fashion200k(BaseDataset):
     """Fashion200k dataset."""
 
-    def __init__(self, path, split='train'):
+    def __init__(self, path, split='train', feat_file=None):
         super().__init__()
-
+        
+        self.name = 'Fashion200k'
         self.split = split
         self.img_path = path + '/'
+        self.open_world = False
+        
+        if feat_file:
+          self.train_feat, self.test_feat = torch.load(os.path.join(path,feat_file))
+          self.feat_dim = self.train_feat.size(1)
+        else:
+          self.train_feat, self.test_feat = None, None
+          self.feat_dim = None
 
         # get label files for the split
         label_path = path + '/labels/'
@@ -83,7 +92,6 @@ class Fashion200k(BaseDataset):
         
         for i, label_files in enumerate([train_label_files, test_label_files]):
             for filename in label_files:
-                print('read ' + filename)
                 with open(label_path + '/' + filename) as f:
                     lines = f.readlines()
                 for line in lines:
@@ -106,24 +114,29 @@ class Fashion200k(BaseDataset):
                     else:
                         self.test_imgs += [img]
                         self.test_pairs.add((caption,obj))
-                        
-        print('Fashion200k - train:', len(self.train_imgs), 'images')
-        print('Fashion200k - test:', len(self.test_imgs), 'images')
         
-        self.attrs = list(self.attrs)
-        self.objs = list(self.objs)
-        self.pairs = list(self.train_pairs | self.test_pairs)
-        self.train_pairs = list(self.train_pairs)
-        self.test_pairs = list(self.test_pairs)
+        self.attrs = sorted(list(self.attrs))
+        self.objs = sorted(list(self.objs))
+        self.pairs = sorted(list(self.train_pairs | self.test_pairs))
+        self.train_pairs = sorted(list(self.train_pairs))
+        self.test_pairs = sorted(list(self.test_pairs))
         self.attr2idx = {attr:i for i, attr in enumerate(self.attrs)}
         self.obj2idx = {obj:i for i, obj in enumerate(self.objs)}
         self.pair2idx = {pair:i for i, pair in enumerate(self.pairs)}
-
 
         # generate query for training and testing
         
         self.caption_index_init_()
         self.generate_test_queries_()
+        
+        if self.split=='train':
+          print('Fashion200k - train:', len(self.train_imgs), 'images')
+          self.test_imgs = None
+          self.test_feat = None
+        else:
+          print('Fashion200k - test:', len(self.test_imgs), 'images')
+          self.train_imgs = None
+          self.train_feat = None
 
     def generate_test_queries_(self):
         file2imgid = {}
@@ -234,19 +247,22 @@ class Fashion200k(BaseDataset):
         sample += get_sample(target_idx)
         return sample
       
-    def getitem_test(self, idx):
+    def getitem_test(self, query_idx):
         '''
         'source_img_id': idx,
         'source_caption': source_caption,
         'target_caption': target_caption,
         'obj': self.imgs[idx]['obj']
         '''
-        query = self.test_queries[idx]
+        query = self.test_queries[query_idx]
         img_idx  = query['source_img_id']
         attr_id = self.attr2idx[query['source_caption']]
         obj_id = self.obj2idx[query['obj']]
         pair_id = self.pair2idx[(query['source_caption'], query['obj'])]
-        sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx)]
+        t_attr = query['target_caption']
+        t_attr_id = self.attr2idx[t_attr]
+        t_pair_id = self.pair2idx[(t_attr, query['obj'])]
+        sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx), -1, t_attr_id, obj_id, t_pair_id]
         return sample
       
     def __getitem__(self, idx):
@@ -256,6 +272,10 @@ class Fashion200k(BaseDataset):
           return self.getitem_test(idx)
 
     def get_img(self, idx, raw_img=False):
+        feat_file = self.train_feat if self.split=='train' else self.test_feat
+        if feat_file is not None:
+          return feat_file[idx]
+        
         imgs = self.train_imgs if self.split=='train' else self.test_imgs
         img_path = self.img_path + imgs[idx]['file_path']
         with open(img_path, 'rb') as f:
