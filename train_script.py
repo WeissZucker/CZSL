@@ -24,12 +24,12 @@ else:
   dev = "cpu"
 
 
-model_name = "gaeir_mit"
+model_name = "gaeir_fashion"
 
 open_world = True
-dataset_name = 'MITg'
-cpu_eval = True
-feat_file = 'compcos.t7'
+dataset_name = 'Fashion200k'
+cpu_eval = False
+feat_file = 'features.t7'
 resnet_name = None#'resnet18'
 resnet_lr = 5e-6
 with_image = resnet_name is not None
@@ -37,12 +37,12 @@ with_image = resnet_name is not None
 train_only = False
 
 take_compo_scores = True
-lr = 5e-5
+lr = 5e-4
 weight_decay = 0
 num_epochs = 200
 batch_size = 128
 
-eval_every = 2
+eval_every = 1
 
 hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay,
@@ -52,7 +52,7 @@ if resnet_name:
 
 # =======   Dataset & Evaluator  =======
 data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
-rand_sample_size=0
+rand_sampling=False
 ignore_objs = []
 
 ignore_objs = [
@@ -66,21 +66,19 @@ ignore_objs = [
             'wheel', 'window', 'wool'
             ]
 
-rand_sample_size=1 # for image retrieval model, dataset also return n randomly picked target imgs
-
+rand_sampling = True
+  
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
-                                          train_only=train_only, shuffle=True, random_sample_size=rand_sample_size, ignore_objs=ignore_objs)
-if rand_sample_size>0:
-  batch_size = 1
+                                          train_only=train_only, shuffle=True, random_sampling=rand_sampling, ignore_objs=ignore_objs)
 val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image,
-                                        open_world=open_world, random_sample_size=rand_sample_size, ignore_objs=ignore_objs)
+                                        open_world=open_world, random_sampling=rand_sampling, ignore_objs=ignore_objs)
 dset = train_dataloader.dataset
 nbias = 20
 # val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
 # target_metric = 'OpAUC'
 # target_metric = 'OpUnseen'
 val_evaluator = IREvaluator(cpu_eval)
-target_metric = 'IR_Rec'
+target_metric = 'IR_Rec/top1'
 
 # ======  Load HParam from checkpoint =======
 try:
@@ -150,6 +148,7 @@ optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 # criterion = npair_loss
 criterion = batch_ce_loss
+# criterion = obj_aware_loss
 
 # hparam.add('recon_loss_ratio', 0.1)
 # criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
@@ -203,9 +202,12 @@ else:
     logger = SummaryWriter("runs/"+model_name+' '+datetime_str)
 print(f"Logging to: {logger.log_dir}")
 
+
+
+# ====     Train    ========
 try:
   train(model, hparam, optimizer, criterion, val_criterion, num_epochs, batch_size, train_dataloader, val_dataloader, logger, val_evaluator, target_metric,
-        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world, eval_every=3, cpu_eval=cpu_eval)
+        curr_epoch=curr_epoch, best=best, save_path=model_path, open_world=open_world, eval_every=eval_every, cpu_eval=cpu_eval)
 except KeyboardInterrupt:
   print("Training stopped.")
 finally:
