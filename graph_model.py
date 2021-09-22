@@ -307,11 +307,11 @@ class GAE_IR(GraphModelBase):
         self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
                                     norm_output=self.hparam.img_fc_norm)
         self.pair_fc = ParametricMLP(self.hparam.node_dim*2, self.hparam.shared_emb_dim, 
-                                     self.hparam.pair_fc_layers, batch_norm=False, norm_output=self.hparam.pair_fc_norm)
+                                     self.hparam.pair_fc_layers, batch_norm=True, norm_output=self.hparam.pair_fc_norm)
         
-        self.hparam.add_dict({'compo_fc_layers': [800, 1000], 'compo_fc_norm': True})
-        self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
-                                      self.hparam.compo_fc_layers, batch_norm=False, norm_output=self.hparam.compo_fc_norm)
+        self.hparam.add_dict({'compo_fc_layers': [1200, 1500], 'compo_fc_norm': True})
+        self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim+self.nodes.size(1)*2, self.hparam.shared_emb_dim,
+                                      self.hparam.compo_fc_layers, batch_norm=True, norm_output=self.hparam.compo_fc_norm)
         
         self.dset = dset
  
@@ -352,7 +352,7 @@ class GAE_IR(GraphModelBase):
       t_pair_feats = self.get_pair(t_attr_id, obj_id, nodes)
       
       # s_img_feats or s_img
-      theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
+      theta = self.compo_fc(torch.cat((s_img, t_pair_feats, self.nodes[t_attr_id], self.nodes[self.nattrs+obj_id]), dim=1))
       target = self.img_fc(t_img)
       return theta, target
     
@@ -378,41 +378,66 @@ class GAE_IR(GraphModelBase):
         neg_pairs.append(neg_pair)
       return theta, targets, neg_pairs
     
-    def generate_test_queries(self, attr_id, obj_id):
+    def generate_test_queries(self, attr_id, obj_id, maxlen=10):
       attr = self.dset.attrs[attr_id]
       obj = self.dset.objs[obj_id]
-      t_attrs = set([_attr for _attr, _obj in self.dset.test_pairs if obj==_obj and attr!=_attr])
-      t_pairs = torch.tensor([self.dset.pair2idx[(_attr, obj)] for _attr in t_attrs])
-      t_attrs = torch.tensor([self.dset.attr2idx[_attr] for _attr in t_attrs])
-      return t_attrs, t_pairs
+      t_attrs = list(set([_attr for _attr, _obj in self.dset.test_pairs if obj==_obj and attr!=_attr]))[:maxlen]
+      t_pair_ids = torch.tensor([self.dset.pair2idx[(_attr, obj)] for _attr in t_attrs])
+      t_attr_ids = torch.tensor([self.dset.attr2idx[_attr] for _attr in t_attrs])
+      return t_attr_ids, t_pair_ids
     
-    def val_forward(self, x):
+    def val_forward(self, img, s_pair_id, t_pair_id, obj_id, t_attr_id, nodes):
+      img_feat = self.img_fc(img)
+      t_pair_feat = self.get_pair(t_attr_id, obj_id, nodes)
+      theta = self.compo_fc(torch.cat((img, t_pair_feat, self.nodes[t_attr_id], self.nodes[self.nattrs+obj_id]), dim=1))
+      return theta, t_pair_id, img_feat, s_pair_id
+    
+    def val_forward_fashion(self, x):
+      if self.resnet:
+        s_img = self.resnet(x[4].to(dev))
+      else:
+        s_img = x[4].to(dev)
+      
+      nodes = self.gae.encode(self.nodes, self.train_pair_edges)
+      s_attr_id, obj_id, s_pair_id = x[1:4]
+      t_attr_id, t_pair_id = x[6], x[8]
+      return self.val_forward(s_img, s_pair_id, t_pair_id, obj_id, t_attr_id, nodes)
+      
+    def val_forward_mitstates(self, x):
       if self.resnet:
         s_img = self.resnet(x[4].to(dev))
       else:
         s_img = x[4].to(dev)
  
-      s_attr_id, obj_id, s_pair_id = x[1:4]
-      t_attr_id, t_pair_id = self.generate_test_queries(s_attr_id, obj_id)
-      ntarget = len(t_pair_id)
-      s_attr_id = s_attr_id.repeat(ntarget)
-      s_pair_id = s_pair_id.repeat(ntarget)
-      obj_id = obj_id.repeat(ntarget)
-      s_img = s_img.repeat(ntarget, 1)
-      
-      s_img_feats = self.img_fc(s_img)
-      
+      s_attr_ids, obj_ids, s_pair_ids = x[1:4]
+      thetas, t_pair_ids, img_feats = [], [], []
       nodes = self.gae.encode(self.nodes, self.train_pair_edges)
 
-      t_pair_feats = self.get_pair(t_attr_id, obj_id, nodes)
+      for s_attr_id, s_pair_id, img, obj_id in zip(s_attr_ids, s_pair_ids, s_img, obj_ids):
+        # Find target samples for each source sample
+        t_attr_id, t_pair_id = self.generate_test_queries(s_attr_id, obj_id)
+        ntarget = len(t_pair_id)
+        s_attr_id = s_attr_id.repeat(ntarget)
+        s_pair_id = s_pair_id.repeat(ntarget)
+        obj_id = obj_id.repeat(ntarget)
+        img = img.unsqueeze(0).repeat(ntarget, 1)
+        theta, _, img_feat, _ = self.val_forward(img, s_pair_id, t_pair_id, obj_id, t_attr_id, nodes)
+        thetas.append(theta)
+        t_pair_ids.append(t_pair_id)
+        img_feats.append(img_feat[0].unsqueeze(0))
 
-      theta = self.compo_fc(torch.cat((s_img, t_pair_feats), dim=1))
+      thetas = torch.cat(thetas)
+      t_pair_ids = torch.cat(t_pair_ids)
+      img_feats = torch.cat(img_feats)
 
-      return theta, t_pair_id, s_img_feats[0].view(1,-1), s_pair_id[0].view(1,-1)
-    
+      return thetas, t_pair_ids, img_feats, s_pair_ids
+                    
     def forward(self, x):
       if self.training:
-        return self.train_object_aware_forward(x)
+        return self.train_simple_forward(x)
       else:
-        return self.val_forward(x)
+        if self.dset.name == 'Fashion200k':
+          return self.val_forward_fashion(x)
+        else:
+          return self.val_forward_mitstates(x)
       
