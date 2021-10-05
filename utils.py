@@ -3,6 +3,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 
 if torch.cuda.is_available():  
@@ -132,6 +133,8 @@ class ObjAwareLoss(_Loss):
   
 obj_aware_loss = ObjAwareLoss()
 
+
+
 class GAELoss(_Loss):
   name = 'GAELoss'
   def __init__(self, recon_loss_ratio):
@@ -140,7 +143,7 @@ class GAELoss(_Loss):
     
   def loss(self, model_output, sample):
     pair_pred, nodes, model = model_output
-    recon_loss = model.gae.recon_loss(nodes, model.train_pair_edges)
+    recon_loss = model.gae.recon_loss(model, nodes)
     ce_loss, ce_loss_dict = pair_cross_entropy_loss(pair_pred, sample)
     total_loss = (1-self.recon_loss_ratio) * ce_loss + self.recon_loss_ratio * recon_loss
     loss_dict = {'recon_loss':recon_loss} | ce_loss_dict
@@ -373,3 +376,35 @@ def generate_graph_primitive(dataset_name):
   embs = torch.vstack(embs)
   
   return {"adj": adj, "embeddings": embs}
+
+def gae_negative_sampling(edge_index, nattrs, nobjs, num_nodes=None, num_neg_samples=None):
+  from torch_geometric.utils.num_nodes import maybe_num_nodes
+  def sample(idx, size, device=None):
+    size = min(len(idx), size)
+    return torch.tensor(np.random.choice(idx, size), device=dev)
+  
+  num_nodes = nattrs + nobjs
+  num_neg_samples = num_neg_samples or edge_index.size(1)
+
+  # Handle '|V|^2 - |E| < |E|'.
+  size = num_nodes * num_nodes
+  num_neg_samples = min(num_neg_samples, size - edge_index.size(1))
+
+  row, col = edge_index
+  idx = row * num_nodes + col
+  all_pair_row, all_pair_col = np.meshgrid(range(nattrs), range(nattrs, nobjs+nattrs))
+  all_pair_idx = all_pair_row.ravel() * num_nodes + all_pair_col.ravel()
+
+  # Percentage of edges to oversample so that we are save to only sample once
+  # (in most cases).
+  alpha = abs(1 / (1 - 1.2 * (edge_index.size(1) / size)))
+
+  perm = sample(all_pair_idx, int(alpha * num_neg_samples))
+  mask = torch.from_numpy(np.isin(perm.to('cpu'), idx.to('cpu'))).to(torch.bool)
+  perm = perm[~mask][:num_neg_samples].to(edge_index.device)
+  
+  row = perm // num_nodes
+  col = perm % num_nodes
+  neg_edge_index = torch.stack([row, col], dim=0).long()
+
+  return neg_edge_index
