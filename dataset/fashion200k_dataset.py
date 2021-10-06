@@ -99,7 +99,8 @@ class Fashion200k(BaseDataset):
                     obj = line[0].split('/')[1]
                     caption = caption_post_process(line[2])
                     self.objs.add(obj)
-                    self.attrs.add(caption)
+                    for attr in caption.split():
+                      self.attrs.add(attr)
                     img = {
                         'file_path': line[0],
                         'detection_score': line[1],
@@ -110,10 +111,12 @@ class Fashion200k(BaseDataset):
                     }
                     if i==0:
                         self.train_imgs += [img]
-                        self.train_pairs.add((caption, obj))
+                        for attr in caption.split():
+                          self.train_pairs.add((attr, obj))
                     else:
                         self.test_imgs += [img]
-                        self.test_pairs.add((caption,obj))
+                        for attr in caption.split():
+                          self.test_pairs.add((attr, obj))
         
         self.attrs = sorted(list(self.attrs))
         self.objs = sorted(list(self.objs))
@@ -225,26 +228,35 @@ class Fashion200k(BaseDataset):
             for c in img['captions']:
                 texts.append(c)
         return texts
-
-    def __len__(self):
-        if self.split == 'train':
-          return len(self.train_imgs)
-        else:
-          return len(self.test_queries)
+        
+    def get_different_word(self, source_caption, target_caption):
+        source_words = source_caption.split()
+        target_words = target_caption.split()
+        for source_word in source_words:
+            if source_word not in target_words:
+                break
+        for target_word in target_words:
+            if target_word not in source_words:
+                break
+        mod_str = 'replace ' + source_word + ' with ' + target_word
+        return source_word, target_word, mod_str
         
     # [img_name, attr_id, obj_id, pair_id, img_feature, img_name, attr_id, obj_id, pair_id, img_feature]
     def getitem_train(self, idx):
-        def get_sample(idx):
+        def get_sample(idx, attr):
             img = self.train_imgs[idx]
-            attr_id = self.attr2idx[img['captions'][0]]
+            attr_id = self.attr2idx[attr]
             obj_id = self.obj2idx[img['obj']]
-            pair_id = self.pair2idx[(img['captions'][0], img['obj'])]
+            pair_id = self.pair2idx[(attr, img['obj'])]
             return [idx, attr_id, obj_id, pair_id, self.get_img(idx)]
           
         idx, target_idx = self.caption_index_sample_(
             idx)
-        sample = get_sample(idx)
-        sample += get_sample(target_idx)
+        s_caption = self.train_imgs[idx]['captions'][0]
+        t_caption = self.train_imgs[target_idx]['captions'][0]
+        s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+        sample = get_sample(idx, s_attr)
+        sample += get_sample(target_idx, t_attr)
         return sample
       
     def getitem_test(self, query_idx):
@@ -256,13 +268,14 @@ class Fashion200k(BaseDataset):
         '''
         query = self.test_queries[query_idx]
         img_idx  = query['source_img_id']
-        attr_id = self.attr2idx[query['source_caption']]
+        s_caption, t_caption = query['source_caption'], query['target_caption']
+        s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+        attr_id = self.attr2idx[s_attr]
         obj_id = self.obj2idx[query['obj']]
-        pair_id = self.pair2idx[(query['source_caption'], query['obj'])]
-        t_attr = query['target_caption']
+        pair_id = self.pair2idx[(s_attr, query['obj'])]
         t_attr_id = self.attr2idx[t_attr]
         t_pair_id = self.pair2idx[(t_attr, query['obj'])]
-        sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx), -1, t_attr_id, obj_id, t_pair_id]
+        sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx), t_caption, t_attr_id, obj_id, t_pair_id]
         return sample
       
     def __getitem__(self, idx):
@@ -270,6 +283,12 @@ class Fashion200k(BaseDataset):
           return self.getitem_train(idx)
         else:
           return self.getitem_test(idx)
+        
+    def __len__(self):
+        if self.split == 'train':
+          return len(self.train_imgs)
+        else:
+          return len(self.test_queries)
 
     def get_img(self, idx, raw_img=False):
         feat_file = self.train_feat if self.split=='train' else self.test_feat
