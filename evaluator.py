@@ -266,11 +266,14 @@ class EvaluatorWithFscore(Evaluator):
     return report
   
 
-
-class IREvaluator():
+class _IREvaluator:
   def __init__(self, cpu_eval):
     self.dev = 'cpu' if cpu_eval else dev
     
+  def eval_output(self, output, attr_labels, obj_labels):
+    pass
+
+class IREvaluator(_IREvaluator):
   def recall(self, preds, labels):
     # preds: [nsample, k]
     nsample = len(preds)
@@ -279,9 +282,6 @@ class IREvaluator():
     return rec
   
   def eval_output(self, output, attr_labels, obj_labels):
-    attr_labels = attr_labels.to(self.dev)
-    obj_labels = obj_labels.to(self.dev)
-
     output = list(zip(*output))
     theta = torch.cat(output[0])
     t_pair_ids = torch.cat(output[1])
@@ -290,7 +290,7 @@ class IREvaluator():
 
     dot = theta @ img_feats.T
     mask = torch.zeros_like(dot, dtype=torch.bool)
-    for i in range(len(theta)):
+    for i in range(min(len(theta), len(img_feats))):
       mask[i,i] = True
     dot[mask] = -1e5
     report = dict()
@@ -300,4 +300,116 @@ class IREvaluator():
       rec = self.recall(pred_pairs, t_pair_ids)
       report[f'IR_Rec/top{k}'] = rec.item()
     return report
+  
+class Fashion200kWrapper:
+  def __init__(self, dset):
+    self.dset = dset
+    
+  def __len__(self):
+    return len(self.dset.test_imgs)
+  
+  def __getitem__(self, idx):
+    img_feat = self.dset.get_img(idx)
+    img = self.dset.test_imgs[idx]
+    return [img_feat, img['captions'][0], self.dset.obj2idx[img['obj']]]
+  
+class IREvaluatorFashion(_IREvaluator):
+  def __init__(self, cpu_eval, dset, model):
+    self.dev = 'cpu' if cpu_eval else dev
+    self.dset = dset
+    self.img_feats, self.captions, self.obj_ids = self.extract_dataset(model)
+    
+  def extract_dataset(self, model):
+    from torch.utils.data import DataLoader
+    model.eval()
+    batch_size=128
+    loader = DataLoader(Fashion200kWrapper(self.dset), batch_size, False)
+    img_feats = []
+    captions = []
+    objs = []
+    print("Extracting test dataset for evaluation.")
+    with torch.no_grad():
+      for batch in tqdm.tqdm(loader):
+        img_feats.append(model.img_fc(batch[0]))
+        captions += batch[1]
+        objs.append(batch[2])
+    img_feats = torch.cat(img_feats).to(self.dev)
+    objs = torch.cat(objs).to(self.dev)
+    return img_feats, captions, objs
+    
+  def recall(self, t_attr_id, obj_id, caption_preds, obj_preds):
+    obj_match = (obj_id.unsqueeze(1) == obj_preds).any(dim=1)
+    t_attr = [self.dset.attrs[i] for i in t_attr_id]
+    attr_match = []
+    for i in range(len(t_attr_id)):
+      attr_match.append(any([t_attr[i] in caption for caption in caption_preds[i]]))
+    attr_match = torch.tensor(attr_match, dtype=torch.bool).to(self.dev)
+    rec = (obj_match & attr_match).float().mean()
+    return rec
+  
+  def recall_caption(self, caption_preds, captions):
+    match = []
+    for pred, caption in zip(caption_preds, captions):
+      match.append(any([caption==caption_pred for caption_pred in pred]))
+    return torch.tensor(match).float().mean()
+  
+  def eval_output(self, output, attr_id, obj_id):
+    t_caption = []
+    for batch in output:
+      t_caption += batch[-1]
+    output = list(zip(*output))
+
+    theta = torch.cat(output[0]).to(self.dev)
+    t_attr_id = torch.cat(output[1]).to(self.dev)
+    s_img_idx = torch.cat(output[2]).to(self.dev)
+    t_obj_id = obj_id.to(self.dev)
+
+    dot = theta @ self.img_feats.T
+    dot[range(len(dot)), s_img_idx] = -1e10
+    
+    report = dict()
+    for k in [1, 10, 50]:
+      predictions = dot.topk(k, dim=1).indices # nqueries * topk
+      caption_preds = []
+      for k_pred in predictions:
+        captions = [self.captions[i] for i in k_pred]
+        caption_preds.append(captions)
+#       rec = self.recall_caption(caption_preds, t_caption)
+      obj_preds = self.obj_ids[predictions]
+      rec = self.recall(t_attr_id, t_obj_id, caption_preds, obj_preds)
+      report[f'IR_Rec/top{k}'] = rec.item()
+    return report
+  
+  '''
+  def eval_output(self, output, attr_id, obj_id):
+    s_caption, t_caption = [], []
+    for batch in output:
+      s_caption += batch[-2]
+      t_caption += batch[-1]
+    output = list(zip(*output))
+
+    theta = torch.cat(output[0]).to(self.dev)
+    t_attr_id = torch.cat(output[1]).to(self.dev)
+    img_feat = torch.cat(output[2]).to(self.dev)
+    obj_id = obj_id.to(self.dev)
+    
+    dot = theta @ img_feat.T
+    mask = torch.zeros_like(dot, dtype=torch.bool)
+    for i in range(len(theta)):
+      mask[i,i] = True
+    dot[mask] = -1e5
+    
+    report = dict()
+    for k in [1, 10, 50]:
+      predictions = dot.topk(k, dim=1).indices # nqueries * topk
+      caption_preds = []
+      for k_pred in predictions:
+        captions = [s_caption[i] for i in k_pred]
+        caption_preds.append(captions)
+      obj_preds = obj_id[predictions]
+#       rec = self.recall(t_attr_id, obj_id, caption_preds, obj_preds)
+      rec = self.recall_caption(caption_preds, t_caption)
+      report[f'IR_Rec/top{k}'] = rec.item()
+    return report
+    '''
     
