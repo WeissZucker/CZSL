@@ -330,7 +330,10 @@ class IREvaluatorFashion(_IREvaluator):
     print("Extracting test dataset for evaluation.")
     with torch.no_grad():
       for batch in tqdm.tqdm(loader):
-        img_feats.append(model.img_fc(batch[0]))
+        img = batch[0]
+        if model.resnet:
+          img = model.resnet(img.to(dev))
+        img_feats.append(model.img_fc(img))
         captions += batch[1]
         objs.append(batch[2])
     img_feats = torch.cat(img_feats).to(self.dev)
@@ -374,42 +377,8 @@ class IREvaluatorFashion(_IREvaluator):
       for k_pred in predictions:
         captions = [self.captions[i] for i in k_pred]
         caption_preds.append(captions)
-#       rec = self.recall_caption(caption_preds, t_caption)
-      obj_preds = self.obj_ids[predictions]
-      rec = self.recall(t_attr_id, t_obj_id, caption_preds, obj_preds)
-      report[f'IR_Rec/top{k}'] = rec.item()
-    return report
-  
-  '''
-  def eval_output(self, output, attr_id, obj_id):
-    s_caption, t_caption = [], []
-    for batch in output:
-      s_caption += batch[-2]
-      t_caption += batch[-1]
-    output = list(zip(*output))
-
-    theta = torch.cat(output[0]).to(self.dev)
-    t_attr_id = torch.cat(output[1]).to(self.dev)
-    img_feat = torch.cat(output[2]).to(self.dev)
-    obj_id = obj_id.to(self.dev)
-    
-    dot = theta @ img_feat.T
-    mask = torch.zeros_like(dot, dtype=torch.bool)
-    for i in range(len(theta)):
-      mask[i,i] = True
-    dot[mask] = -1e5
-    
-    report = dict()
-    for k in [1, 10, 50]:
-      predictions = dot.topk(k, dim=1).indices # nqueries * topk
-      caption_preds = []
-      for k_pred in predictions:
-        captions = [s_caption[i] for i in k_pred]
-        caption_preds.append(captions)
-      obj_preds = obj_id[predictions]
-#       rec = self.recall(t_attr_id, obj_id, caption_preds, obj_preds)
       rec = self.recall_caption(caption_preds, t_caption)
+#       obj_preds = self.obj_ids[predictions]
+#       rec = self.recall(t_attr_id, t_obj_id, caption_preds, obj_preds)
       report[f'IR_Rec/top{k}'] = rec.item()
     return report
-    '''
-    
