@@ -99,8 +99,9 @@ class Fashion200k(BaseDataset):
                     obj = line[0].split('/')[1]
                     caption = caption_post_process(line[2])
                     self.objs.add(obj)
-                    for attr in caption.split():
-                      self.attrs.add(attr)
+#                     for attr in caption.split():
+#                       self.attrs.add(attr)
+                    self.attrs.add(caption)
                     img = {
                         'file_path': line[0],
                         'detection_score': line[1],
@@ -111,12 +112,14 @@ class Fashion200k(BaseDataset):
                     }
                     if i==0:
                         self.train_imgs += [img]
-                        for attr in caption.split():
-                          self.train_pairs.add((attr, obj))
+#                         for attr in caption.split():
+#                           self.train_pairs.add((attr, obj))
+                        self.train_pairs.add((caption, obj))
                     else:
                         self.test_imgs += [img]
-                        for attr in caption.split():
-                          self.test_pairs.add((attr, obj))
+#                         for attr in caption.split():
+#                           self.test_pairs.add((attr, obj))
+                        self.test_pairs.add((caption, obj))
         
         self.attrs = sorted(list(self.attrs))
         self.objs = sorted(list(self.objs))
@@ -158,7 +161,8 @@ class Fashion200k(BaseDataset):
                 'source_img_id': idx,
                 'source_caption': source_caption,
                 'target_caption': target_caption,
-                'obj': self.test_imgs[idx]['obj']
+                'target_img_id': target_idx,
+                'obj': self.test_imgs[idx]['obj'],
             }]
 
     def caption_index_init_(self):
@@ -254,9 +258,12 @@ class Fashion200k(BaseDataset):
             idx)
         s_caption = self.train_imgs[idx]['captions'][0]
         t_caption = self.train_imgs[target_idx]['captions'][0]
-        s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+#         s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+        s_attr, t_attr = s_caption, t_caption
         sample = get_sample(idx, s_attr)
         sample += get_sample(target_idx, t_attr)
+        sample += [t_caption]
+#         sample += [self.get_bert(target_idx)]
         return sample
       
     def getitem_test(self, query_idx):
@@ -269,13 +276,15 @@ class Fashion200k(BaseDataset):
         query = self.test_queries[query_idx]
         img_idx  = query['source_img_id']
         s_caption, t_caption = query['source_caption'], query['target_caption']
-        s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+#         s_attr, t_attr, _ = self.get_different_word(s_caption, t_caption)
+        s_attr, t_attr = s_caption, t_caption
         attr_id = self.attr2idx[s_attr]
         obj_id = self.obj2idx[query['obj']]
         pair_id = self.pair2idx[(s_attr, query['obj'])]
         t_attr_id = self.attr2idx[t_attr]
         t_pair_id = self.pair2idx[(t_attr, query['obj'])]
         sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx), t_caption, t_attr_id, obj_id, t_pair_id]
+#         sample = [img_idx, attr_id, obj_id, pair_id, self.get_img(img_idx), self.get_bert(query['target_img_id']), t_attr_id, obj_id, t_pair_id]
         return sample
       
     def __getitem__(self, idx):
@@ -311,3 +320,9 @@ class Fashion200k(BaseDataset):
                                                  [0.229, 0.224, 0.225])
             ])(img)
         return img
+      
+    def get_bert(self, idx):
+      if self.split=='train':
+        return self.train_bert[idx]
+      else:
+        return self.test_bert[idx]
