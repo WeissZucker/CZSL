@@ -15,7 +15,7 @@ dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 
-class ImageRetrievalModel():
+class ImageRetrievalModel(nn.Module):
   def get_pair(self, attr_id, obj_id, nodes):
     """Primitive embeddings to pair embeddings"""
     pass
@@ -64,7 +64,7 @@ class ImageRetrievalModel():
     else:
       s_img = x[4].to(dev)
       t_img = x[9].to(dev)
-    t_attr_id, obj_id = x[6], x[2]
+    t_attr_id, obj_id = x[6].to(dev), x[2].to(dev)
 
     nodes = self.get_nodes()
 
@@ -99,8 +99,8 @@ class ImageRetrievalModel():
     attr = self.dset.attrs[attr_id]
     obj = self.dset.objs[obj_id]
     t_attrs = list(set([_attr for _attr, _obj in self.dset.test_pairs if obj==_obj and attr!=_attr]))[:maxlen]
-    t_pair_ids = torch.tensor([self.dset.all_pair2idx[(_attr, obj)] for _attr in t_attrs])
-    t_attr_ids = torch.tensor([self.dset.attr2idx[_attr] for _attr in t_attrs])
+    t_pair_ids = torch.tensor([self.dset.all_pair2idx[(_attr, obj)] for _attr in t_attrs]).to(dev)
+    t_attr_ids = torch.tensor([self.dset.attr2idx[_attr] for _attr in t_attrs]).to(dev)
     return t_attr_ids, t_pair_ids
 
   def val_forward_mitstates(self, x):
@@ -109,7 +109,7 @@ class ImageRetrievalModel():
     else:
       s_img = x[4].to(dev)
 
-    s_attr_ids, obj_ids, s_pair_ids = x[1:4]
+    s_attr_ids, obj_ids, s_pair_ids = [item.to(dev) for item in x[1:4]]
     thetas, t_pair_ids, img_feats = [], [], []
     nodes = self.get_nodes()
 
@@ -126,9 +126,9 @@ class ImageRetrievalModel():
       t_pair_ids.append(t_pair_id)
       img_feats.append(img_feat[0].unsqueeze(0))
 
-    thetas = torch.cat(thetas)
-    t_pair_ids = torch.cat(t_pair_ids)
-    img_feats = torch.cat(img_feats)
+    thetas = torch.cat(thetas).to(dev)
+    t_pair_ids = torch.cat(t_pair_ids).to(dev)
+    img_feats = torch.cat(img_feats).to(dev)
 
     return thetas, t_pair_ids, img_feats, s_pair_ids
   
@@ -204,7 +204,7 @@ class GAE_IR(GraphModelBase, ImageRetrievalModel):
   
   
   
-class GAE_IR_Bert(GraphModelBase, GAE_IR):
+class GAE_IR_Bert(GAE_IR):
   def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, static_inp=True, pretrained_gae=None):
     super(GAE_IR_Bert, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
 
@@ -245,7 +245,7 @@ class CGEIR(ImageRetrievalModel, CGE):
     self.resnet=None
     self.img_feat_dim = dset.feat_dim
     
-    self.img_fc = nn.Identity();
+    self.img_fc = nn.Identity()
     self.hparam.add('node_dim', self.embeddings.size(1))
 
     self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
@@ -265,7 +265,7 @@ class CGEIR(ImageRetrievalModel, CGE):
   
   
   
-class CGEIRBert(ImageRetrievalModel, CGE):
+class CGEIRBert(CGEIR):
   def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None):
     super(CGE_IR, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
     self.resnet=None
@@ -287,12 +287,12 @@ class CGEIRBert(ImageRetrievalModel, CGE):
   
   
 from compcos import CompCos
-class CompcosIR(ImageRetrievalModel, CompCos):
-  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None):
-    super(CGE_IR, self).__init__(hparam, dset)
+class CompcosIR(CompCos, ImageRetrievalModel):
+  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
+    super(CompcosIR, self).__init__(hparam, dset, resnet_name=resnet_name)
     self.img_feat_dim = dset.feat_dim
     
-    self.img_fc = nn.Identity();
+    self.img_fc = self.image_embedder
 
     self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
     self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
@@ -307,9 +307,9 @@ class CompcosIR(ImageRetrievalModel, CompCos):
   
 
 
-class CompcosIRBert(ImageRetrievalModel, CompCosIR):
-  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None):
-    super(CGE_IR, self).__init__(hparam, dset)
+class CompcosIRBert(CompcosIR):
+  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
+    super(CompcosIRBert, self).__init__(hparam, dset, resnet_name=resnet_name)
     self.img_feat_dim = dset.feat_dim
     
     self.img_fc = nn.Identity();
