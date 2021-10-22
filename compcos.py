@@ -5,7 +5,7 @@ from model import *
 
 from itertools import product
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def compute_cosine_similarity(names, weights, return_dict=True):
     pairing_names = list(product(names, names))
@@ -20,8 +20,7 @@ def compute_cosine_similarity(names, weights, return_dict=True):
     return pairing_names, similarity.to('cpu')
 
 class CompCos(nn.Module):
-
-    def __init__(self, hparam, dset):
+    def __init__(self, hparam, dset, resnet_name):
         super(CompCos, self).__init__()
         self.hparam = hparam
         self.dset = dset
@@ -32,23 +31,33 @@ class CompCos(nn.Module):
             attrs = [dset.attr2idx[attr] for attr in attrs]
             objs = [dset.obj2idx[obj] for obj in objs]
             pairs = [a for a in range(len(relevant_pairs))]
-            attrs = torch.LongTensor(attrs).to(device)
-            objs = torch.LongTensor(objs).to(device)
-            pairs = torch.LongTensor(pairs).to(device)
+            attrs = torch.LongTensor(attrs).to(dev)
+            objs = torch.LongTensor(objs).to(dev)
+            pairs = torch.LongTensor(pairs).to(dev)
             return attrs, objs, pairs
+          
+        if resnet_name:    
+          import torchvision.models as models
+          self.resnet = models.resnet18(pretrained=True).to(dev)
+          if static_inp:
+            self.resnet = frozen(self.resnet)
+          self.img_feat_dim = self.resnet.fc.in_features
+          self.resnet.fc = nn.Identity()
+        else:
+          self.resnet = None
 
         # Validation
         self.val_attrs, self.val_objs, self.val_pairs = get_all_ids(self.dset.pairs)
 
         # for indivual projections
-        self.uniq_attrs, self.uniq_objs = torch.arange(len(self.dset.attrs)).long().to(device), \
-                                          torch.arange(len(self.dset.objs)).long().to(device)
+        self.uniq_attrs, self.uniq_objs = torch.arange(len(self.dset.attrs)).long().to(dev), \
+                                          torch.arange(len(self.dset.objs)).long().to(dev)
         self.factor = 2
         self.scale = 20
 
 
         # Precompute training compositions
-        if args.train_only:
+        if self.hparam.train_only:
             self.train_attrs, self.train_objs, self.train_pairs = get_all_ids(self.dset.train_pairs)
         else:
             self.train_attrs, self.train_objs, self.train_pairs = self.val_attrs, self.val_objs, self.val_pairs
@@ -61,23 +70,16 @@ class CompCos(nn.Module):
         # Fixed
         self.composition = 'mlp_add'
         
-        attrs_init = torch.load('./embeddings/MIT/w2v_ft_attrs.pt')
-        objs_init = torch.load('./embeddings/MIT/w2v_ft_objs.pt')
+        attrs_init = torch.load('./embeddings/MIT/w2v_ft_attrs.pt').to(dev)
+        objs_init = torch.load('./embeddings/MIT/w2v_ft_objs.pt').to(dev)
         init_dim = attrs_init.size(-1)
-        assert(init_dim == self.hparam.shared_emb_dim, "The primitive emb dimension doesn't match the shared_emb_dim")
+        assert init_dim == self.hparam.shared_emb_dim, "The primitive emb dimension doesn't match the shared_emb_dim"
         self.attr_embedder = nn.Embedding(len(dset.attrs), self.hparam.shared_emb_dim)
         self.obj_embedder = nn.Embedding(len(dset.objs), self.hparam.shared_emb_dim)
 
         self.attr_embedder.weight.data.copy_(attrs_init)
         self.obj_embedder.weight.data.copy_(objs_init)
-
-        # static inputs
-        if args.static_inp:
-            for param in self.attr_embedder.parameters():
-                param.requires_grad = False
-            for param in self.obj_embedder.parameters():
-                param.requires_grad = False
-
+ 
         # Composition MLP
         self.projection = nn.Linear(self.hparam.shared_emb_dim * 2, self.hparam.shared_emb_dim)
 
@@ -145,9 +147,9 @@ class CompCos(nn.Module):
         self.activated = True
         feasibility_scores = self.compute_feasibility()
         self.feasibility_margin = min(1.,epoch/self.epoch_max_margin) * \
-                                  (self.cosine_margin_factor*feasibility_scores.float().to(device))
+                                  (self.cosine_margin_factor*feasibility_scores.float().to(dev))
 
-
+'''
     def val_forward(self, x):
         img = x[0]
         img_feats = self.image_embedder(img)
@@ -213,3 +215,4 @@ class CompCos(nn.Module):
                 loss, pred = self.val_forward(x)
 
         return loss, pred
+'''
