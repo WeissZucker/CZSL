@@ -317,7 +317,7 @@ class IREvaluatorFashion(_IREvaluator):
   def __init__(self, cpu_eval, dset, model):
     self.dev = 'cpu' if cpu_eval else dev
     self.dset = dset
-    self.img_feats, self.captions, self.obj_ids = self.extract_dataset(model)
+    self.model = model
     
   def extract_dataset(self, model):
     from torch.utils.data import DataLoader
@@ -357,6 +357,7 @@ class IREvaluatorFashion(_IREvaluator):
     return torch.tensor(match).float().mean()
   
   def eval_output(self, output, attr_id, obj_id):
+    self.img_feats, self.captions, self.obj_ids = self.extract_dataset(self.model)
     t_caption = []
     for batch in output:
       t_caption += batch[-1]
