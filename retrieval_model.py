@@ -158,9 +158,9 @@ class ImageRetrievalModel(nn.Module):
 
       
       
-class GAE_IR(GraphModelBase, ImageRetrievalModel):
+class GAEIR(GraphModelBase, ImageRetrievalModel):
   def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, static_inp=True, pretrained_gae=None):
-    super(GAE_IR, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
+    super(GAEIR, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
 
     if pretrained_gae:
       checkpoint = torch.load(pretrained_gae)
@@ -204,9 +204,9 @@ class GAE_IR(GraphModelBase, ImageRetrievalModel):
   
   
   
-class GAE_IR_Bert(GAE_IR):
+class GAEIRBert(GAEIR):
   def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, static_inp=True, pretrained_gae=None):
-    super(GAE_IR_Bert, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
+    super(GAEIRBert, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
 
     self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
     for i, (attr, obj) in enumerate(dset.train_pairs):
@@ -241,7 +241,7 @@ class GAE_IR_Bert(GAE_IR):
   
 class CGEIR(ImageRetrievalModel, CGE):
   def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None):
-    super(CGE_IR, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
+    super(CGEIR, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
     self.resnet=None
     self.img_feat_dim = dset.feat_dim
     
@@ -267,7 +267,7 @@ class CGEIR(ImageRetrievalModel, CGE):
   
 class CGEIRBert(CGEIR):
   def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None):
-    super(CGE_IR, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
+    super(CGEIRBert, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
     self.resnet=None
     self.img_feat_dim = dset.feat_dim
     
