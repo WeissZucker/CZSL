@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-import os
+import os, sys, argparse
 import datetime
 
 import dataset
@@ -10,8 +10,10 @@ import dataset
 from train import *
 from evaluator import *
 from model import *
-from utils import *
 from graph_model import *
+from retrieval_model import *
+from utils import *
+
 from gcn import *
 
 from pytorch_metric_learning import losses, miners
@@ -22,32 +24,38 @@ if torch.cuda.is_available():
   dev = "cuda:0"
 else:
   dev = "cpu"
+  
+parser = argparse.ArgumentParser()
+parser.add_argument('--eval', action='store_true', help='only evaluation, no training.')
+args = parser.parse_args()
 
 
-model_name = "gaeir_fashion"
 
-open_world = True
-dataset_name = 'Fashion200k'
-cpu_eval = False
+model_name = "cgeir_mit_cw"
+
+dataset_name = 'MITg'
+open_world = False
+train_only = True
+cpu_eval = True
+take_compo_scores = True
+
 feat_file = 'features.t7'
-resnet_name = None#'resnet18'
+resnet_name = None #'resnet18'
+static_inp = True
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
-train_only = False
-
-take_compo_scores = True
-lr = 5e-4
+lr = 1e-4
 weight_decay = 0
-num_epochs = 200
+num_epochs = 500
 batch_size = 128
 
-eval_every = 1
+eval_every = 3
 
 hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay,
                 'train_only': train_only})
-if resnet_name:
+if resnet_name and not static_inp:
   hparam.add_dict({'resnet': resnet_name, 'resnet_lr': resnet_lr})
 
 # =======   Dataset & Evaluator  =======
@@ -67,18 +75,15 @@ ignore_objs = [
             ]
 
 rand_sampling = True
-  
+
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
                                           train_only=train_only, shuffle=True, random_sampling=rand_sampling, ignore_objs=ignore_objs)
+
 val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image,
                                         open_world=open_world, random_sampling=rand_sampling, ignore_objs=ignore_objs)
 dset = train_dataloader.dataset
 nbias = 20
-# val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
-# target_metric = 'OpAUC'
-# target_metric = 'OpUnseen'
-val_evaluator = IREvaluator(cpu_eval)
-target_metric = 'IR_Rec/top1'
+
 
 # ======  Load HParam from checkpoint =======
 try:
@@ -98,17 +103,11 @@ except FileNotFoundError:
 if checkpoint and 'hparam_dict' in checkpoint:
   hparam.add_dict(checkpoint['hparam_dict'])
   hparam.freeze()
-  
 
-# hparam.add_dict({'graph_encoder_layers': [1024], 'node_dim': 600})
-# hparam.add('shared_emb_dim', 600)
-# hparam.add_dict({'img_fc_layers': [800, 1000], 'img_fc_norm': True,
-#                       'pair_fc_layers': [1200], 'pair_fc_norm': True})
-# hparam.add_dict({'attr_cls_layers': [1500], 'obj_cls_layers': [1500]})
-# hparam.freeze = True
+# hparam.add_dict({'graph_encoder_layers': [1024]})
 
 # ====     Model & Loss    ========
-graph_name = 'graph_primitive.pt'
+graph_name = 'graph_cw.pt'
 graph_path = os.path.join('./embeddings', data_folder, graph_name)
 
 # model = ResnetDoubleHead(resnet_name, [768,1024,1200]).to(dev)
@@ -122,8 +121,12 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = CGE(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
 # model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-pretrained_gae = None#'./models/gae_mit_obj_filter_op_trainonly.pt'
-model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=pretrained_gae).to(dev)
+pretrained_gae = None #'./models/gae_mit_obj_filter_op_trainonly.pt'
+# model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp, pretrained_gae=pretrained_gae).to(dev)
+model = CGEIR(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
+# model = GAE_IR_Bert(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp, pretrained_gae=pretrained_gae).to(dev)
+# model = CompcosIR(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path, resnet_name=resnet_name).to(dev)
+
 
 model_params, resnet_params = [], []
 for name, param in model.named_parameters():
@@ -131,20 +134,16 @@ for name, param in model.named_parameters():
     resnet_params.append(param)
   else:
     model_params.append(param)
-params = [{'params': model_params}, {'params': resnet_params, 'lr': resnet_lr}]
+params = [{'params': model_params}]
+if not static_inp:
+  params.append({'params': resnet_params, 'lr': resnet_lr})
 optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 
-# criterion = contrastive_hinge_loss
 # criterion = pair_cross_entropy_loss
-# criterion = contrastive_triplet_loss4
-# criterion = contrastive_triplet_loss
 # criterion = primitive_cross_entropy_loss
 # criterion = reciprocal_cross_entropy_loss(pre_loss_scale=0, adaptive_scale=False, total_epochs=200)
-# criterion = unimodal_contrastive_loss(adaptive_scale=True, warm_up_steps=10)
-# criterion = three_loss
 # criterion = gae_stage_3_loss([0.4, 0.4, 1, 0.2])
 # criterion = gae_stage_3_npair_loss([0.4, 0.4, 0, 0.2])
-# criterion = triplet_loss_x(10)
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 # criterion = npair_loss
 criterion = batch_ce_loss
@@ -172,6 +171,13 @@ hparam.add_dict(criterion.hparam_dict)
 val_criterion = dummy_loss
 # hparam.add_dict(val_criterion.hparam_dict)
 
+
+# val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
+# target_metric = 'OpAUC'
+# target_metric = 'OpUnseen'
+val_evaluator = IREvaluator(cpu_eval)
+# val_evaluator = IREvaluatorFashion(cpu_eval, val_dataloader.dataset, model)
+target_metric = 'IR_Rec/top1'
 
 # === Restore model and logger from Checkpoint ===
 curr_epoch = 0
@@ -204,11 +210,12 @@ print(f"Logging to: {logger.log_dir}")
 
 
 # =====   Evaluation  ======
-summary, _ = evaluate(model, val_criterion, val_dataloader, val_evaluator, open_world, cpu_eval)
-for key, value in summary.items():
-  print(f'{key}:{value:.4f}|', end='')
-print()
-sys.exit(0)
+if args.eval:
+  summary, _ = evaluate(model, val_criterion, val_dataloader, val_evaluator, open_world, cpu_eval)
+  for key, value in summary.items():
+    print(f'{key}:{value:.4f}|', end='')
+  print()
+  sys.exit(0)
 
 # ====     Train    ========
 try:
