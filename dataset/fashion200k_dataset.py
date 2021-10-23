@@ -129,6 +129,7 @@ class Fashion200k(BaseDataset):
         self.attr2idx = {attr:i for i, attr in enumerate(self.attrs)}
         self.obj2idx = {obj:i for i, obj in enumerate(self.objs)}
         self.pair2idx = {pair:i for i, pair in enumerate(self.pairs)}
+        self.all_pair2idx = self.pair2idx
 
         # generate query for training and testing
         
