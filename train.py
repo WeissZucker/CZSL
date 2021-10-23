@@ -10,13 +10,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data import random_split
 from torch.utils.tensorboard import SummaryWriter
 
-import ray
-from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
-
 import dataset
-from evaluator import *
+from evaluator import _IREvaluator
 
 if torch.cuda.is_available():  
   dev = "cuda:0" 
@@ -78,7 +73,7 @@ def evaluate(net, val_criterion, val_dataloader, evaluator, open_world, cpu_eval
   attr_labels = torch.cat(attr_labels).to(val_dev)
   obj_labels = torch.cat(obj_labels).to(val_dev)
 
-  if not open_world and not isinstance(evaluator, IREvaluator):
+  if not open_world and not isinstance(evaluator, _IREvaluator):
     outputs = cw_output_converter(outputs, val_dataloader, cpu_eval)
 
   summary = evaluator.eval_output(outputs, attr_labels, obj_labels)
