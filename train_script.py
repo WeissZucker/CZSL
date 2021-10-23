@@ -203,6 +203,12 @@ else:
 print(f"Logging to: {logger.log_dir}")
 
 
+# =====   Evaluation  ======
+summary, _ = evaluate(model, val_criterion, val_dataloader, val_evaluator, open_world, cpu_eval)
+for key, value in summary.items():
+  print(f'{key}:{value:.4f}|', end='')
+print()
+sys.exit(0)
 
 # ====     Train    ========
 try:
