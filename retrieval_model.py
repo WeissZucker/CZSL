@@ -33,7 +33,14 @@ class ImageRetrievalModel(nn.Module):
   def generate_theta_bert(self, img, obj_id, t_attr_id, nodes):
     img_feat = self.img_fc(img)
     t_pair_feat = self.get_pair(t_attr_id, obj_id, nodes)
-    t_caption_feat = self.nodes[t_attr_id]
+    t_caption_feat = self.caption_feats[t_attr_id]
+    theta = self.compo_fc(torch.cat((img, t_caption_feat), dim=1))
+    return theta, img_feat
+  
+  def generate_theta_gated(self, img, obj_id, t_attr_id, nodes):
+    img_feat = self.img_fc(img)
+    t_pair_feat = self.get_pair(t_attr_id, obj_id, nodes)
+    t_caption_feat = self.caption_feats[t_attr_id]
     residual_feat = self.compo_fc(torch.cat((img, t_caption_feat), dim=1))
     gate = self.compo_gate(torch.cat((img, t_pair_feat), dim=1))
     theta = self.compo_weight[0]*residual_feat + self.compo_weight[1]*gate
@@ -235,7 +242,8 @@ class GAEIRBert(GAEIR):
     self.compo_weight = nn.Parameter(torch.tensor([10.0, 1.0]))
 
     self.dset = dset
-    self.generate_theta = self.generate_theta_bert
+    self.generate_theta = self.generate_theta_gated
+    self.caption_feats = self.nodes[:self.nattrs]
 
   
   
@@ -288,8 +296,8 @@ class CGEIRBert(CGEIR):
   
 from compcos import CompCos
 class CompcosIR(CompCos, ImageRetrievalModel):
-  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
-    super(CompcosIR, self).__init__(hparam, dset, resnet_name=resnet_name)
+  def __init__(self, hparam, dset, attr_emb_path, obj_emb_path, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
+    super(CompcosIR, self).__init__(hparam, dset, attr_emb_path, obj_emb_path, resnet_name=resnet_name)
     self.img_feat_dim = dset.feat_dim
     
     self.img_fc = self.image_embedder
@@ -308,19 +316,19 @@ class CompcosIR(CompCos, ImageRetrievalModel):
 
 
 class CompcosIRBert(CompcosIR):
-  def __init__(self, hparam, dset, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
-    super(CompcosIRBert, self).__init__(hparam, dset, resnet_name=resnet_name)
+  def __init__(self, hparam, dset, attr_emb_path, obj_emb_path, train_only=True, static_inp=True, graph_path=None, resnet_name=None):
+    super(CompcosIRBert, self).__init__(hparam, dset, attr_emb_path, obj_emb_path, resnet_name=resnet_name)
     self.img_feat_dim = dset.feat_dim
+    self.generate_theta = self.generate_theta_gated
+    self.caption_feats = torch.load(attr_emb_path).to(dev)
     
-    self.img_fc = nn.Identity();
 
     self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
-    self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
+    self.compo_fc = ParametricMLP(self.img_feat_dim+self.caption_feats.size(1), self.hparam.shared_emb_dim,
                                   self.hparam.compo_fc_layers, batch_norm=True, norm_output=self.hparam.compo_fc_norm)
+    
     self.hparam.add_dict({'gate_fc_layers': [1000], 'gate_fc_norm': False})
     self.compo_gate = nn.Sequential(ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
                                   self.hparam.gate_fc_layers, norm_output=self.hparam.gate_fc_norm),
                                      nn.Sigmoid())
     self.compo_weight = nn.Parameter(torch.tensor([10.0, 1.0]))
-    
-    self.generate_theta = self.generate_theta_bert

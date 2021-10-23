@@ -20,7 +20,7 @@ def compute_cosine_similarity(names, weights, return_dict=True):
     return pairing_names, similarity.to('cpu')
 
 class CompCos(nn.Module):
-    def __init__(self, hparam, dset, resnet_name):
+    def __init__(self, hparam, dset, attr_emb_path, obj_emb_path, resnet_name):
         super(CompCos, self).__init__()
         self.hparam = hparam
         self.dset = dset
@@ -70,18 +70,17 @@ class CompCos(nn.Module):
         # Fixed
         self.composition = 'mlp_add'
         
-        attrs_init = torch.load('./embeddings/MIT/w2v_ft_attrs.pt').to(dev)
-        objs_init = torch.load('./embeddings/MIT/w2v_ft_objs.pt').to(dev)
+        attrs_init = torch.load(attr_emb_path).to(dev)
+        objs_init = torch.load(obj_emb_path).to(dev)
         init_dim = attrs_init.size(-1)
-        assert init_dim == self.hparam.shared_emb_dim, "The primitive emb dimension doesn't match the shared_emb_dim"
-        self.attr_embedder = nn.Embedding(len(dset.attrs), self.hparam.shared_emb_dim)
-        self.obj_embedder = nn.Embedding(len(dset.objs), self.hparam.shared_emb_dim)
+        self.attr_embedder = nn.Embedding(len(dset.attrs), init_dim)
+        self.obj_embedder = nn.Embedding(len(dset.objs), init_dim)
 
         self.attr_embedder.weight.data.copy_(attrs_init)
         self.obj_embedder.weight.data.copy_(objs_init)
  
         # Composition MLP
-        self.projection = nn.Linear(self.hparam.shared_emb_dim * 2, self.hparam.shared_emb_dim)
+        self.projection = nn.Linear(init_dim * 2, self.hparam.shared_emb_dim)
 
 
     def freeze_representations(self):
@@ -95,7 +94,7 @@ class CompCos(nn.Module):
 
 
     def compose(self, attrs, objs):
-        attrs, objs = self.attr_embedder(attrs), self.obj_embedder(objs)
+        attrs, objs = self.attr_embedder(attrs.to(dev)), self.obj_embedder(objs.to(dev))
         inputs = torch.cat([attrs, objs], 1)
         output = self.projection(inputs)
         output = F.normalize(output, dim=1)
