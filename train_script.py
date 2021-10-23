@@ -27,6 +27,7 @@ else:
   
 parser = argparse.ArgumentParser()
 parser.add_argument('--eval', action='store_true', help='only evaluation, no training.')
+parser.add_argument('--dry', action='store_true', help='dry run, set model_name to "tmp".')
 args = parser.parse_args()
 
 
@@ -86,9 +87,7 @@ nbias = 20
 
 
 # ======  Load HParam from checkpoint =======
-try:
-  model_name
-except NameError:
+if args.dry:
   model_name = 'tmp'
 model_dir = './models/'
 model_path = os.path.join(model_dir, model_name+'.pt')
