@@ -12,7 +12,11 @@ from gcn import CGE
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-
+import torchvision.models as models
+resnet_models = {'resnet18': models.resnet18,
+                 'resnet50': models.resnet50,
+                 'resnet101': models.resnet101,
+                 'resnet152': models.resnet152}
 
 class GraphModelBase(nn.Module):
   def __init__(self, hparam, dset, graph_path, train_only=False, resnet_name=None, static_inp=True):
@@ -21,9 +25,9 @@ class GraphModelBase(nn.Module):
     self.nattrs, self.nobjs = len(dset.attrs), len(dset.objs)
     self.img_feat_dim = dset.feat_dim
 
-    if resnet_name:    
-      import torchvision.models as models
-      self.resnet = models.resnet18(pretrained=True).to(dev)
+    if resnet_name:
+      assert resnet_name in resnet_models, f"{resnet_name} doesn't match any known models"
+      self.resnet = resnet_models[resnet_name](pretrained=True).to(dev)
       if static_inp:
         self.resnet = frozen(self.resnet)
       self.img_feat_dim = self.resnet.fc.in_features
