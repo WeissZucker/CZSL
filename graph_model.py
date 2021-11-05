@@ -202,7 +202,7 @@ def recon_loss(model, z):
 
   
 class GAE(GraphModelBase):
-  def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, pretrained_gae=None, pretrained_mlp=None):
+  def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None):
     super(GAE, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name)
 
     self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)

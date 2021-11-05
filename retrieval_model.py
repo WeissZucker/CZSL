@@ -166,14 +166,8 @@ class ImageRetrievalModel(nn.Module):
       
       
 class GAEIR(GraphModelBase, ImageRetrievalModel):
-  def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, static_inp=True, pretrained_gae=None):
+  def __init__(self, hparam, dset, graph_path=None, train_only=False, resnet_name=None, static_inp=True):
     super(GAEIR, self).__init__(hparam, dset, graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=True)
-
-    if pretrained_gae:
-      checkpoint = torch.load(pretrained_gae)
-      hparam.freeze() # parameters that have already been set won't be updated 
-      hparam.add_dict(checkpoint['hparam_dict'])
-      del checkpoint
 
     self.train_pair_edges = torch.zeros((2, len(dset.train_pairs)), dtype=torch.long).to(dev)
     for i, (attr, obj) in enumerate(dset.train_pairs):
@@ -184,16 +178,16 @@ class GAEIR(GraphModelBase, ImageRetrievalModel):
     self.encoder = GraphEncoder(gnn.SAGEConv, self.nodes.size(1), self.hparam.node_dim, self.hparam.graph_encoder_layers)
     self.gae = gnn.GAE(self.encoder)
 
-    self.hparam.add_dict({'img_fc_layers': [800, 1000], 'img_fc_norm': True,
+    self.hparam.add_dict({'img_fc_layers': [1000], 'img_fc_norm': True,
                           'pair_fc_layers': [1000], 'pair_fc_norm': True})
-    self.hparam.add('shared_emb_dim', 800)
+    self.hparam.add('shared_emb_dim', 600)
     self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
                                 norm_output=self.hparam.img_fc_norm)
 
     self.pair_fc = ParametricMLP(self.hparam.node_dim*2, self.hparam.shared_emb_dim, 
                                  self.hparam.pair_fc_layers, batch_norm=True, norm_output=self.hparam.pair_fc_norm)
 
-    self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
+    self.hparam.add_dict({'compo_fc_layers': [1200], 'compo_fc_norm': True})
     self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
                                   self.hparam.compo_fc_layers, batch_norm=True, norm_output=self.hparam.compo_fc_norm)
 
@@ -278,19 +272,21 @@ class CGEIRBert(CGEIR):
     super(CGEIRBert, self).__init__(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path)
     self.resnet=None
     self.img_feat_dim = dset.feat_dim
+    self.generate_theta = self.generate_theta_bert
+    self.caption_feats = self.embeddings[:self.nattrs]
     
     self.img_fc = nn.Identity();
     self.hparam.add('node_dim', self.embeddings.size(1))
 
     self.hparam.add_dict({'compo_fc_layers': [1000, 1200], 'compo_fc_norm': True})
-    self.compo_fc = ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
+    self.compo_fc = ParametricMLP(self.img_feat_dim+self.caption_feats.size(1), self.hparam.shared_emb_dim,
                                   self.hparam.compo_fc_layers, batch_norm=True, norm_output=self.hparam.compo_fc_norm)
-    self.hparam.add_dict({'gate_fc_layers': [1000], 'gate_fc_norm': False})
-    self.compo_gate = nn.Sequential(ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
-                                  self.hparam.gate_fc_layers, norm_output=self.hparam.gate_fc_norm),
-                                     nn.Sigmoid())
-    self.compo_weight = nn.Parameter(torch.tensor([10.0, 1.0]))
-    self.generate_theta = self.generate_theta_bert
+#     self.hparam.add_dict({'gate_fc_layers': [1000], 'gate_fc_norm': False})
+#     self.compo_gate = nn.Sequential(ParametricMLP(self.img_feat_dim+self.hparam.shared_emb_dim, self.hparam.shared_emb_dim,
+#                                   self.hparam.gate_fc_layers, norm_output=self.hparam.gate_fc_norm),
+#                                      nn.Sigmoid())
+#     self.compo_weight = nn.Parameter(torch.tensor([10.0, 1.0]))
+    
 
   
   
