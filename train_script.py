@@ -32,30 +32,30 @@ args = parser.parse_args()
 
 
 
-model_name = "cgeir_mit_cw"
+model_name = "gae_cgqa_cw"
 
-dataset_name = 'MITg'
+dataset_name = 'CGQAg'
 open_world = False
 train_only = True
 cpu_eval = True
 take_compo_scores = True
 
-feat_file = 'features.t7'
+feat_file = 'features.t7'#'resnet50.pt'
 resnet_name = None #'resnet18'
 static_inp = True
 resnet_lr = 5e-6
 with_image = resnet_name is not None
 
-lr = 1e-4
+lr = 5e-5
 weight_decay = 0
-num_epochs = 500
+num_epochs = 180
 batch_size = 128
 
 eval_every = 3
 
 hparam = HParam()
 hparam.add_dict({'lr': lr, 'batchsize': batch_size, 'wd': weight_decay,
-                'train_only': train_only})
+                'open_world': open_world, 'train_only': train_only})
 if resnet_name and not static_inp:
   hparam.add_dict({'resnet': resnet_name, 'resnet_lr': resnet_lr})
 
@@ -64,23 +64,28 @@ data_folder = dataset_name if dataset_name[-1] != 'g' else dataset_name[:-1]
 rand_sampling=False
 ignore_objs = []
 
-ignore_objs = [
-            'armor', 'bracelet', 'bush', 'camera', 'candy', 'castle',
-            'ceramic', 'cheese', 'clock', 'clothes', 'coffee', 'fan', 'fig',
-            'fish', 'foam', 'forest', 'fruit', 'furniture', 'garden', 'gate',
-            'glass', 'horse', 'island', 'laptop', 'lead', 'lightning',
-            'mirror', 'orange', 'paint', 'persimmon', 'plastic', 'plate',
-            'potato', 'road', 'rubber', 'sand', 'shell', 'sky', 'smoke',
-            'steel', 'stream', 'table', 'tea', 'tomato', 'vacuum', 'wax',
-            'wheel', 'window', 'wool'
-            ]
+# ignore_objs = [
+#             'armor', 'bracelet', 'bush', 'camera', 'candy', 'castle',
+#             'ceramic', 'cheese', 'clock', 'clothes', 'coffee', 'fan', 'fig',
+#             'fish', 'foam', 'forest', 'fruit', 'furniture', 'garden', 'gate',
+#             'glass', 'horse', 'island', 'laptop', 'lead', 'lightning',
+#             'mirror', 'orange', 'paint', 'persimmon', 'plastic', 'plate',
+#             'potato', 'road', 'rubber', 'sand', 'shell', 'sky', 'smoke',
+#             'steel', 'stream', 'table', 'tea', 'tomato', 'vacuum', 'wax',
+#             'wheel', 'window', 'wool'
+#             ]
 
-rand_sampling = True
+# ignore_objs = [
+#             'Shoes.Boat.Shoes',
+#             'Boots.Knee.High'
+#             ]
+
+# rand_sampling = True
 
 train_dataloader = dataset.get_dataloader(dataset_name, 'train', feature_file=feat_file, batchsize=batch_size, with_image=with_image, open_world=open_world, 
                                           train_only=train_only, shuffle=True, random_sampling=rand_sampling, ignore_objs=ignore_objs)
-
-val_dataloader = dataset.get_dataloader(dataset_name, 'test', feature_file=feat_file, batchsize=batch_size, with_image=with_image,
+val_set = 'test' if args.eval else 'val'
+val_dataloader = dataset.get_dataloader(dataset_name, val_set, feature_file=feat_file, batchsize=batch_size, with_image=with_image,
                                         open_world=open_world, random_sampling=rand_sampling, ignore_objs=ignore_objs)
 dset = train_dataloader.dataset
 nbias = 20
@@ -106,7 +111,7 @@ if checkpoint and 'hparam_dict' in checkpoint:
 # hparam.add_dict({'graph_encoder_layers': [1024]})
 
 # ====     Model & Loss    ========
-graph_name = 'graph_cw.pt'
+graph_name = 'graph_primitive.pt'
 graph_path = os.path.join('./embeddings', data_folder, graph_name)
 
 # model = ResnetDoubleHead(resnet_name, [768,1024,1200]).to(dev)
@@ -119,12 +124,13 @@ graph_path = os.path.join('./embeddings', data_folder, graph_name)
 # model = GraphMLP(hparam, dset, graph_path=graph_path, resnet_name=resnet_name).to(dev)
 # model = CGE(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
 # model = ReciprocalClassifierGraph(dset, './embeddings/graph_primitive.pt', [1000, 1300, 1500], resnet_name = resnet_name).to(dev)
-# model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, pretrained_gae=None, pretrained_mlp=None).to(dev)
-pretrained_gae = None #'./models/gae_mit_obj_filter_op_trainonly.pt'
-# model = GAE_IR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp, pretrained_gae=pretrained_gae).to(dev)
-model = CGEIR(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
-# model = GAE_IR_Bert(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp, pretrained_gae=pretrained_gae).to(dev)
-# model = CompcosIR(hparam, dset, train_only=train_only, static_inp=static_inp, graph_path=graph_path, resnet_name=resnet_name).to(dev)
+model = GAE(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name).to(dev)
+# model = GAEIR(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp).to(dev)
+# model = CGEIR(hparam, dset, train_only=train_only, graph_path=graph_path).to(dev)
+# model = GAE_IR_Bert(hparam, dset, graph_path=graph_path, train_only=train_only, resnet_name=resnet_name, static_inp=static_inp).to(dev)
+# attr_emb_path = os.path.join('./embeddings/', data_folder, 'w2v_attrs.pt')
+# obj_emb_path = os.path.join('./embeddings/', data_folder, 'w2v_objs.pt')
+# model = CompcosIR(hparam, dset, attr_emb_path, obj_emb_path, train_only=train_only, static_inp=static_inp, graph_path=graph_path, resnet_name=resnet_name).to(dev)
 
 
 model_params, resnet_params = [], []
@@ -145,11 +151,11 @@ optimizer = torch.optim.Adam(params, lr=hparam.lr, weight_decay=hparam.wd)
 # criterion = gae_stage_3_npair_loss([0.4, 0.4, 0, 0.2])
 # criterion = gae_stage_3_triplet_loss([0.4, 0.4, 0, 0.2], 20)
 # criterion = npair_loss
-criterion = batch_ce_loss
+# criterion = batch_ce_loss
 # criterion = obj_aware_loss
 
-# hparam.add('recon_loss_ratio', 0.1)
-# criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
+hparam.add('recon_loss_ratio', 0.1)
+criterion = GAELoss(recon_loss_ratio=hparam.recon_loss_ratio)
 
 
 # hparam.add('margin', 0.1)
@@ -166,17 +172,17 @@ criterion = batch_ce_loss
 
 hparam.add_dict(criterion.hparam_dict)
 
-# val_criterion = criterion
-val_criterion = dummy_loss
+val_criterion = criterion
+# val_criterion = dummy_loss
 # hparam.add_dict(val_criterion.hparam_dict)
 
 
-# val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
-# target_metric = 'OpAUC'
+val_evaluator = Evaluator(val_dataloader, nbias, cpu_eval, take_compo_scores=take_compo_scores)
+target_metric = 'OpAUC'
 # target_metric = 'OpUnseen'
-val_evaluator = IREvaluator(cpu_eval)
+# val_evaluator = IREvaluator(cpu_eval)
 # val_evaluator = IREvaluatorFashion(cpu_eval, val_dataloader.dataset, model)
-target_metric = 'IR_Rec/top1'
+# target_metric = 'IR_Rec/top1'
 
 # === Restore model and logger from Checkpoint ===
 curr_epoch = 0
