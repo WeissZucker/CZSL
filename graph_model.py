@@ -124,11 +124,11 @@ class GraphMLP(GraphModelBase):
   def __init__(self, hparam, dset, graph_path=None, resnet_name=None, static_inp=True):
     super(GraphMLP, self).__init__(hparam, dset, graph_path, resnet_name=resnet_name, static_inp=static_inp)
     
-    self.hparam.add_dict({'graph_encoder_layers': [2048], 'node_dim': 800})
+    self.hparam.add_dict({'graph_encoder_layers': [4096], 'node_dim': 600})
     self.gcn = GraphEncoder(gnn.SAGEConv, self.nodes.size(1), self.hparam.node_dim, hidden_layer_sizes = self.hparam.graph_encoder_layers)
 
     
-    self.hparam.add('shared_emb_dim', 800)
+    self.hparam.add('shared_emb_dim', 600)
     self.hparam.add_dict({'img_fc_layers': [800, 1000], 'img_fc_norm': True,
                           'pair_fc_layers': [1000], 'pair_fc_norm': True})
     self.img_fc = ParametricMLP(self.img_feat_dim, self.hparam.shared_emb_dim, self.hparam.img_fc_layers,
@@ -225,8 +225,10 @@ class GAE(GraphModelBase):
     self.hparam.add_dict({'attr_cls_layers': [1500], 'obj_cls_layers': [1500]})
     self.attr_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nattrs, self.hparam.attr_cls_layers)
     self.obj_classifier = ParametricMLP(self.hparam.shared_emb_dim, self.nobjs, self.hparam.obj_cls_layers)
-
+    
     self.dset = dset
+    self.train_pairs = set([(dset.attr2idx[attr], dset.obj2idx[obj]) for attr, obj in dset.train_pairs])
+
 
   def get_all_pairs(self, nodes):
     attr_nodes = nodes[:self.nattrs]
@@ -246,6 +248,41 @@ class GAE(GraphModelBase):
       all_pairs = all_pairs[self.train_idx]
     return all_pairs
 
+  def obj_with_attr(self, t_attr):
+    objs = []
+    for attr, obj in self.train_pairs:
+      if(attr ==  t_attr):
+        objs.append(obj)
+    return objs
+
+  def attr_with_obj(self, t_obj):
+    attrs = []
+    for attr, obj in self.train_pairs:
+      if(obj ==  t_obj):
+        attrs.append(attr)
+    return attrs
+
+  def calc_fscore(self, attr, obj, attr_dot, obj_dot):
+    if (attr, obj) in self.train_pairs:
+      return 0
+    objs_with_attr = self.obj_with_attr(attr)
+    attrs_with_obj = self.attr_with_obj(obj)
+    f_obj = obj_dot[obj][objs_with_attr].max()
+    f_attr = attr_dot[attr][attrs_with_obj].max()
+    fscore = (f_obj+f_attr) / 2
+    return fscore
+  
+  def update_fscore(self, nodes):
+    attrs = F.normalize(nodes[:self.nattrs])
+    objs = F.normalize(nodes[self.nattrs:])
+    attr_dot = attrs @ attrs.T
+    obj_dot = objs @ objs.T
+    
+    fscores = []
+    for attr, obj in product(range(self.nattrs), range(self.nobjs)):
+      fscores.append(self.calc_fscore(attr, obj, attr_dot, obj_dot))
+    self.fscores = torch.tensor(fscores).reshape(self.nattrs, self.nobjs).to(dev)
+
   def forward(self, x):
     if self.resnet:
       img = self.resnet(x[4].to(dev))
@@ -261,4 +298,5 @@ class GAE(GraphModelBase):
 #     attr_pred = self.attr_classifier(img_feats)
 #     obj_pred = self.obj_classifier(img_feats)
 #     return pair_pred, attr_pred, obj_pred, img_feats, all_pair_nodes[pair_id], nodes, self
+#     pair_pred -= 0.4 * self.fscores.flatten()
     return pair_pred, nodes, self
